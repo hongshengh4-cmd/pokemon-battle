@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>宝可梦对战 · 自研引擎（第一阶段）</title>
+<link rel="stylesheet" href="./src/ui/styles.css">
+</head>
+<body>
+<header class="top">
+  <h1><span class="ball"></span>宝可梦对战</h1>
+  <div class="controls">
+    <label>对手
+      <select id="sel-enemy">
+        <option value="rookie">短裤小子（简单）</option>
+        <option value="wild">野生宝可梦（简单）</option>
+        <option value="gym" selected>馆主·岚（普通）</option>
+        <option value="champion">冠军·希罗娜风（专家）</option>
+      </select>
+    </label>
+    <label>AI 难度
+      <select id="sel-diff">
+        <option value="easy">easy</option>
+        <option value="normal" selected>normal</option>
+        <option value="hard">hard</option>
+        <option value="expert">expert</option>
+      </select>
+    </label>
+    <button id="btn-start" class="red" type="button">开始新战斗</button>
+  </div>
+</header>
+
+<main class="panel">
+  <div class="arena">
+    <section class="fighter enemy">
+      <div>
+        <div class="name" id="e-name">—</div>
+        <div class="sub" id="e-sub">—</div>
+        <div class="hpbar"><div class="hpfill" id="e-hp" style="width:100%"></div></div>
+        <div class="sub" id="e-hptext">—</div>
+        <div class="teamrow" id="e-team"></div>
+      </div>
+      <div class="sprite" id="e-sprite"><span class="fallback">❔</span></div>
+    </section>
+
+    <section class="fighter">
+      <div class="sprite" id="p-sprite"><span class="fallback">❔</span></div>
+      <div>
+        <div class="name" id="p-name">—</div>
+        <div class="sub" id="p-sub">—</div>
+        <div class="hpbar"><div class="hpfill" id="p-hp" style="width:100%"></div></div>
+        <div class="sub" id="p-hptext">—</div>
+        <div class="teamrow" id="p-team"></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="result hidden" id="result"></div>
+
+  <div class="grid2" style="margin-top:12px">
+    <div>
+      <h3 style="margin:4px 0 8px">选择招式</h3>
+      <div class="moves" id="moves"></div>
+      <h3 style="margin:14px 0 8px">换人</h3>
+      <div class="switches" id="switches"></div>
+      <p class="note">规则（第一阶段）：单打、6v6 队伍、优先度/速度判定、命中、会心、STAB、属性克制、灼伤减攻、麻痹减速、异常状态与能力等级、天气（晴/雨/沙暴）基础效果。特性与道具先只记录数据，效果留到第三阶段。</p>
+    </div>
+    <div>
+      <h3 style="margin:4px 0 8px">战斗日志</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <details style="margin-top:14px">
+    <summary><b>高级：粘贴战斗配置（与酒馆卡协议兼容）</b></summary>
+    <p class="note">把 AI 输出的 <span class="kbd">&lt;PKM_BATTLE&gt;{...}&lt;/PKM_BATTLE&gt;</span> 或纯 JSON 粘进来，即可按配置开战（支持 p1/p2、entrants、party 现场构造）。也可以由酒馆宿主页面通过 <span class="kbd">postMessage</span> 发送 <span class="kbd">{type:"PKM_BATTLE_CONFIG", payload:{...}}</span>，战斗结束后本页会回发 <span class="kbd">{type:"PKM_BATTLE_RESULT", payload:{...}}</span>。</p>
+    <textarea id="txt-config" placeholder='{"difficulty":"normal","p1":{"entrants":[{"name":"player"}]},"p2":{"entrants":[{"name":"野生","type":"wild","party":[{"name":"Garchomp","lv":60,"moves":["Earthquake","Dragon Claw","Stone Edge","Swords Dance"]}]}]}}'></textarea>
+    <div style="margin-top:8px"><button id="btn-config" class="blue" type="button">按配置开始</button></div>
+  </details>
+</main>
+
+<script src="./src/engine/typechart.js"></script>
+<script src="./src/engine/battle.js"></script>
+<script src="./src/data/presets.js"></script>
+<script src="./src/ui/app.js"></script>
+</body>
+</html>

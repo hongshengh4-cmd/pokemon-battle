@@ -1,0 +1,40 @@
+:root{--ink:#20242e;--paper:#f6f1e7;--accent:#e3350d;--blue:#2a75bb;--gold:#ffcb05}
+*{box-sizing:border-box}
+body{margin:0;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;color:var(--ink);background:linear-gradient(180deg,#8ec9e8 0 34%,#bfe3b4 34% 62%,#7dbb6a 62% 100%);min-height:100vh}
+.top{max-width:1024px;margin:0 auto;padding:14px 16px 4px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.top h1{font-size:22px;margin:0;letter-spacing:.04em}
+.top h1 .ball{display:inline-block;width:.8em;height:.8em;border-radius:50%;background:linear-gradient(180deg,var(--accent) 46%,#222 46% 54%,#fff 54%);vertical-align:-.08em;margin-right:.35em;border:2px solid #222}
+.panel{max-width:1024px;margin:10px auto;background:rgba(246,241,231,.96);border:3px solid #222;border-radius:14px;box-shadow:0 10px 28px rgba(20,30,20,.25);padding:14px}
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+select,button,input,textarea{font:inherit}
+select,textarea,input{border:2px solid #222;border-radius:9px;padding:7px 9px;background:#fff}
+button{border:2px solid #222;border-radius:10px;padding:8px 14px;background:var(--gold);cursor:pointer;font-weight:700;box-shadow:0 3px 0 #222}
+button:hover{filter:brightness(1.07)}button:active{transform:translateY(2px);box-shadow:none}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.blue{background:var(--blue);color:#fff}button.red{background:var(--accent);color:#fff}
+.arena{display:grid;gap:8px}
+.fighter{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;background:#fff;border:2px solid #222;border-radius:12px;padding:10px}
+.fighter.enemy{grid-template-columns:1fr 110px}
+.sprite{display:flex;align-items:center;justify-content:center;min-height:96px}
+.sprite img{max-width:110px;max-height:110px;image-rendering:auto}
+.sprite .fallback{font-size:44px}
+.name{font-weight:800;font-size:18px}
+.sub{color:#5a6270;font-size:13px}
+.hpbar{height:14px;border:2px solid #222;border-radius:8px;overflow:hidden;background:#ddd;margin-top:6px}
+.hpfill{height:100%;background:linear-gradient(90deg,#37c978,#7ce495);transition:width .45s ease}
+.hpfill.low{background:linear-gradient(90deg,#e8b93c,#ffd968)}.hpfill.crit{background:linear-gradient(90deg,#d94f3d,#ff8a70)}
+.teamrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.pip{border:2px solid #222;border-radius:999px;padding:2px 9px;font-size:12px;background:#fff}
+.pip.active{background:var(--gold)} .pip.fainted{opacity:.4;text-decoration:line-through}
+.grid2{display:grid;grid-template-columns:1.2fr .8fr;gap:12px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}.fighter,.fighter.enemy{grid-template-columns:84px 1fr}.sprite img{max-width:84px;max-height:84px}}
+.log{height:280px;overflow:auto;background:#20242e;color:#e9edf3;border-radius:10px;padding:10px 12px;line-height:1.65;font-size:14px;white-space:pre-wrap}
+.moves{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.moves button{text-align:left;background:#fff}
+.moves button small{display:block;color:#5a6270;font-weight:400}
+.switches{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.result{font-size:20px;font-weight:900;text-align:center;padding:8px}
+.hidden{display:none!important}
+textarea{width:100%;min-height:110px}
+.note{font-size:13px;color:#5a6270;line-height:1.7}
+.kbd{background:#20242e;color:#fff;border-radius:5px;padding:0 6px}

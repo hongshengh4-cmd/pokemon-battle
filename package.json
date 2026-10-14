@@ -1,0 +1,11 @@
+{
+  "name": "pokemon-battle",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run-tests.mjs",
+    "build-data": "node tools/build-data.mjs",
+    "serve": "python3 -m http.server 8000"
+  }
+}
