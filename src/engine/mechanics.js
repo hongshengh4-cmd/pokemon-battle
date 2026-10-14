@@ -59,6 +59,8 @@
     hustle: ['活力', '物理招式威力与命中会变化（引擎已处理命中）'],
     pressure: ['压迫感', '使对手招式的 PP 额外减少 1'],
     cursedbody: ['诅咒之躯', '受到攻击时 30% 使攻击方招式陷入定身法（4 回合）'],
+    shadowtag: ['踩影', '阻止对手交换宝可梦（幽灵系除外）'],
+    trace: ['追踪', '入场/Mega 后复制对手特性'],
     thickfat: ['厚脂肪', '受到火/冰招式伤害减半'],
     heatproof: ['耐热', '受到火招式伤害减半、灼伤伤害减半'],
     filter: ['过滤', '受到效果绝佳招式伤害 ×0.75'],
@@ -207,6 +209,22 @@
     metalcoat: 'Steel', fairyfeather: 'Fairy', silkscarf: 'Normal',
   };
 
+  const TYPES = ['Normal', 'Fire', 'Water', 'Electric', 'Grass', 'Ice', 'Fighting', 'Poison', 'Ground', 'Flying', 'Psychic', 'Bug', 'Rock', 'Ghost', 'Dragon', 'Dark', 'Steel', 'Fairy'];
+  const TYPE_ZH = { Normal: '一般', Fire: '火', Water: '水', Electric: '电', Grass: '草', Ice: '冰', Fighting: '格斗', Poison: '毒', Ground: '地面', Flying: '飞行', Psychic: '超能力', Bug: '虫', Rock: '岩石', Ghost: '幽灵', Dragon: '龙', Dark: '恶', Steel: '钢', Fairy: '妖精' };
+  const Z_CRYSTALS = {
+    Normal: 'normaliumz', Fire: 'firiumz', Water: 'wateriumz', Electric: 'electriumz', Grass: 'grassiumz', Ice: 'iciumz',
+    Fighting: 'fightiniumz', Poison: 'poisoniumz', Ground: 'groundiumz', Flying: 'flyiniumz', Psychic: 'psychiumz', Bug: 'buginiumz',
+    Rock: 'rockiumz', Ghost: 'ghostiumz', Dragon: 'dragoniumz', Dark: 'darkiniumz', Steel: 'steeliumz', Fairy: 'fairiumz',
+  };
+  for (const type of TYPES) ITEMS[Z_CRYSTALS[type]] = [`${TYPE_ZH[type]}Z`, `Z 水晶：把同属性招式变为 Z 招式（每队每场 1 次）`];
+  const MAX_MOVES = {
+    Normal: ['maxstrike', '极巨攻击'], Fighting: ['maxknuckle', '极巨拳斗'], Flying: ['maxairstream', '极巨飞冲'], Poison: ['maxooze', '极巨酸毒'],
+    Ground: ['maxquake', '极巨大地'], Rock: ['maxrockfall', '极巨岩石'], Bug: ['maxflutterby', '极巨虫蛊'], Ghost: ['maxphantasm', '极巨幽魂'],
+    Steel: ['maxsteelspike', '极巨钢铁'], Fire: ['maxflare', '极巨火爆'], Water: ['maxgeyser', '极巨水流'], Grass: ['maxovergrowth', '极巨草原'],
+    Electric: ['maxlightning', '极巨闪电'], Psychic: ['maxmindstorm', '极巨超能'], Ice: ['maxhailstorm', '极巨寒冰'], Dragon: ['maxwyrmwind', '极巨龙骑'],
+    Dark: ['maxdarkness', '极巨恶霸'], Fairy: ['maxstarfall', '极巨妖精'],
+  };
+
   const api = {
     normId,
     ABILITIES: Object.fromEntries(Object.entries(ABILITIES).map(([id, [name, desc]]) => [id, { id, name, desc }])),
@@ -216,6 +234,11 @@
     itemInfo: id => api.ITEMS[normId(id)] || { id: normId(id), name: id || '无道具', desc: '当前版本尚未实现该道具效果' },
     isSupportedAbility: id => !!api.ABILITIES[normId(id)],
     isSupportedItem: id => Object.prototype.hasOwnProperty.call(api.ITEMS, normId(id)),
+    TYPES, TYPE_ZH, Z_CRYSTALS, MAX_MOVES,
+    canonType: value => TYPES.find(t => normId(t) === normId(value)) || null,
+    zCrystalForType: type => Z_CRYSTALS[api.canonType(type)] || null,
+    typeForZCrystal: item => TYPES.find(t => Z_CRYSTALS[t] === normId(item)) || null,
+    maxMoveForType: type => { const m = MAX_MOVES[type]; return m ? { id: m[0], name: m[1] } : { id: 'maxstrike', name: '极巨攻击' }; },
   };
   root.PKMMechanics = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

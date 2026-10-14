@@ -38,6 +38,26 @@
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  function megaForms(speciesId) {
+    const sid = normId(speciesId);
+    return Object.entries(DEX)
+      .filter(([id, sp]) => id.includes('mega') && normId(sp.baseSpecies || '') === sid)
+      .map(([id, sp]) => ({ id, ...sp }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function gmaxForm(speciesId) {
+    const id = normId(speciesId) + 'gmax';
+    return DEX[id] ? { id, ...DEX[id] } : null;
+  }
+  function mechanicOf(entry) {
+    const mech = root.PKMMechanics;
+    let kind = normId(entry?.mechanic || '');
+    if (!kind && entry?.megaForm) kind = 'mega';
+    if (!kind && entry?.teraType) kind = 'tera';
+    if (!kind && mech?.typeForZCrystal(entry?.item)) kind = 'z';
+    return ['mega', 'z', 'dynamax', 'tera'].includes(kind) ? kind : '';
+  }
+
   function damageScore(species, move) {
     if (!move.basePower) return 0;
     const phys = species.baseStats.atk >= species.baseStats.spa;
@@ -106,6 +126,20 @@
         if (!MOVES[mid]) { errors.push(`${at} ${sid}：招式不存在（${midRaw}）`); continue; }
         if (knownLearnset && !isLegalMove(sid, mid, level)) errors.push(`${at} ${sid}：${MOVES[mid].name} 不在合法学习面内（Lv.${level}）`);
       }
+      const mechKind = mechanicOf(entry);
+      if (entry.mechanic && !mechKind) errors.push(`${at} ${sid}：未知战斗机制（${entry.mechanic}）`);
+      if (mechKind === 'mega') {
+        const forms = megaForms(sid);
+        if (!forms.length) errors.push(`${at} ${sid}：该物种没有 Mega 形态`);
+        else if (!entry.megaForm || !forms.some(f => f.id === normId(entry.megaForm))) errors.push(`${at} ${sid}：请选择有效的 Mega 形态`);
+      }
+      if (mechKind === 'z') {
+        const zType = root.PKMMechanics?.canonType(entry.zType) || root.PKMMechanics?.typeForZCrystal(entry.item);
+        if (!zType) errors.push(`${at} ${sid}：Z 招式需要选择 Z 属性或携带对应 Z 水晶`);
+        else if (!mv.some(mid => MOVES[normId(mid)]?.type === zType)) errors.push(`${at} ${sid}：没有 ${zType} 属性招式，无法使用该 Z 水晶`);
+      }
+      if (mechKind === 'tera' && !root.PKMMechanics?.canonType(entry.teraType)) errors.push(`${at} ${sid}：太晶化需要选择有效的太晶属性`);
+      if (mechKind === 'dynamax' && entry.dynamaxForm === 'gmax' && !gmaxForm(sid)) warnings.push(`${at} ${sid}：没有超极巨化形态，将按普通极巨化处理`);
       if (entry.ability && DEX[sid].abilities?.length && !DEX[sid].abilities.some(a => normId(a) === normId(entry.ability))) {
         errors.push(`${at} ${sid}：特性 ${entry.ability} 不在该物种特性列表中`);
       } else if (entry.ability && root.PKMMechanics && !root.PKMMechanics.isSupportedAbility(entry.ability)) {
@@ -118,7 +152,7 @@
     return { ok: errors.length === 0, errors, warnings };
   }
 
-  const api = { setData, legalInfo, legalMoves, hasLearnset, isLegalMove, chooseAutoMoves, validateTeam, normId };
+  const api = { setData, legalInfo, legalMoves, hasLearnset, isLegalMove, chooseAutoMoves, validateTeam, normId, megaForms, gmaxForm, mechanicOf };
   root.PKMTeam = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

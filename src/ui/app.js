@@ -3,14 +3,15 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const normId = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  let battle = null, moveCache = {};
+  let battle = null, moveCache = {}, selectedMechanic = null;
 
+  const spriteId = p => p.speciesId.replace('megax', '-mega-x').replace('megay', '-mega-y').replace('mega', '-mega').replace('gmax', '-gmax');
   const spriteUrl = (id, back) => `https://play.pokemonshowdown.com/sprites/${back ? 'gen5-back' : 'ani'}/${id}.${back ? 'png' : 'gif'}`;
   function setSprite(el, p, back) {
     el.innerHTML = '';
     const img = new Image();
     img.alt = p.name;
-    img.src = spriteUrl(p.speciesId, back);
+    img.src = spriteUrl(spriteId(p), back);
     img.onerror = () => { img.remove(); const s = document.createElement('span'); s.className = 'fallback'; s.textContent = '🎈'; el.appendChild(s); };
     el.appendChild(img);
   }
@@ -23,7 +24,11 @@
       $(prefix + '-name').textContent = p.name + (p.status ? `（${PKMBattle.STATUS_NAMES[p.status] || p.status}）` : '');
       const ab = PKMMechanics.abilityInfo(p.ability);
       const it = p.item ? PKMMechanics.itemInfo(p.item) : null;
-      $(prefix + '-sub').textContent = `Lv.${p.level} · ${p.types.join('/')} · ${p.speciesName} · 特性 ${ab?.name || p.ability || '无'}${it ? ' · ' + it.name : ''}${p.choiceLockedMove ? ' · 讲究锁定中' : ''}`;
+      const badges = [];
+      if (p.isMega) badges.push('Mega');
+      if (p.terastallized) badges.push(`太晶·${p.teraType}`);
+      if (p.dynamaxed) badges.push(`${p.dynamaxForm === 'gmax' ? '超极巨' : '极巨'}·${p.dynamaxTurns}回合`);
+      $(prefix + '-sub').textContent = `Lv.${p.level} · ${p.types.join('/')} · ${p.speciesName} · 特性 ${ab?.name || p.ability || '无'}${it ? ' · ' + it.name : ''}${badges.length ? ' · ' + badges.join(' · ') : ''}${p.choiceLockedMove ? ' · 讲究锁定中' : ''}`;
       const ratio = p.hp / p.maxHp;
       const bar = $(prefix + '-hp');
       bar.style.width = (ratio * 100).toFixed(1) + '%';
@@ -63,15 +68,31 @@
     log.textContent = battle.log.join('\n');
     log.scrollTop = log.scrollHeight;
 
+    if (battle.pendingSwitch !== null) selectedMechanic = null;
+    const mechRoot = $('mechanics');
+    mechRoot.innerHTML = '';
+    const mechanicLabels = { mega: '✨ Mega 进化', z: '💥 Z 招式', dynamax: '🔴 极巨化', tera: '💎 太晶化' };
+    if (me.mechanic && !battle.mechanicUsed[0][me.mechanic] && !(me.mechanic === 'mega' && me.isMega) && !(me.mechanic === 'dynamax' && me.dynamaxed) && !(me.mechanic === 'tera' && me.terastallized)) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      const zReady = me.mechanic !== 'z' || me.moves.some(m => m.type === me.zType);
+      b.disabled = over || battle.pendingSwitch !== null || !zReady;
+      b.textContent = (selectedMechanic === me.mechanic ? '✓ ' : '') + mechanicLabels[me.mechanic] + (me.mechanic === 'z' ? `（${me.zType}）` : me.mechanic === 'tera' ? `（${me.teraType}）` : '');
+      b.title = '点击后，再选择本回合招式；再次点击可取消';
+      b.onclick = () => { selectedMechanic = selectedMechanic === me.mechanic ? null : me.mechanic; render(); };
+      mechRoot.appendChild(b);
+    } else if (selectedMechanic) selectedMechanic = null;
+
     const moves = $('moves');
     moves.innerHTML = '';
     const over = battle.winner !== null;
     me.moves.forEach((m, i) => {
+      const shown = PKMBattle.transformMove(me, m, selectedMechanic);
       const b = document.createElement('button');
       b.type = 'button';
-      b.disabled = over || battle.pendingSwitch !== null || m.ppLeft <= 0 || (me.choiceLockedMove && me.choiceLockedMove !== m.id) || me.volatile.disableMove === m.id;
-      b.innerHTML = `${m.name}<small>${m.type} · ${m.category}${m.basePower ? ' · 威力 ' + m.basePower : ''} · PP ${m.ppLeft}/${m.pp}</small>`;
-      b.onclick = () => act({ kind: 'move', index: i });
+      b.disabled = over || battle.pendingSwitch !== null || m.ppLeft <= 0 || (me.choiceLockedMove && me.choiceLockedMove !== m.id) || me.volatile.disableMove === m.id || (selectedMechanic === 'z' && m.type !== me.zType);
+      b.innerHTML = `${shown.name}<small>${shown.type} · ${shown.category}${shown.basePower ? ' · 威力 ' + shown.basePower : ''} · PP ${m.ppLeft}/${m.pp}</small>`;
+      b.onclick = () => act({ kind: 'move', index: i, mechanic: selectedMechanic });
       moves.appendChild(b);
     });
     const sw = $('switches');
@@ -105,7 +126,7 @@
     try { window.top?.postMessage({ type: 'PKM_BATTLE_RESULT', payload }, '*'); } catch (_) {}
   }
   function after() { render(); announceResult(); }
-  function act(a) { if (!battle) return; battle.turn(a); after(); }
+  function act(a) { if (!battle) return; battle.turn(a); selectedMechanic = null; after(); }
 
   function buildFromPreset(trainer) {
     return trainer.party.map(p => PKMBattle.createPokemon(p.species, p.level, p.moves, p));
@@ -125,6 +146,7 @@
   }
 
   function startBattle(cfg) {
+    selectedMechanic = null;
     let playerTeam, enemyTeam, difficulty = $('sel-diff').value, weather = null;
     if (cfg) {
       difficulty = cfg.difficulty || difficulty;
@@ -172,7 +194,7 @@
   }
   function editorRoot(side) { return side === 'player' ? $('editor-player') : $('editor-enemy'); }
   function specFromPreset(key) {
-    return PKMPresets.TRAINERS[key].party.map(p => ({ species: p.species, level: p.level, nature: p.nature || '', ability: p.ability || '', item: p.item || '', moves: p.moves.slice() }));
+    return PKMPresets.TRAINERS[key].party.map(p => ({ species: p.species, level: p.level, nature: p.nature || '', ability: p.ability || '', item: p.item || '', mechanic: p.mechanic || '', megaForm: p.megaForm || '', zType: p.zType || '', teraType: p.teraType || '', dynamaxForm: p.dynamaxForm || '', moves: p.moves.slice() }));
   }
   function loadEditorSpecs() {
     try {
@@ -183,6 +205,25 @@
   }
   function saveEditorSpecs(show) {
     try { localStorage.setItem(LS_KEY, JSON.stringify({ player: readEditor('player'), enemy: readEditor('enemy') })); if (show) showValidate('已保存到本机浏览器。'); } catch (e) { if (show) alert('保存失败：' + e.message); }
+  }
+  function refreshMechanicOptions(row) {
+    const sid = resolveSpeciesId(row.querySelector('.f-species').value);
+    const kind = row.querySelector('.f-mechanic').value;
+    const detail = row.querySelector('.f-mechanic-detail');
+    const prev = detail.value || detail.dataset.want || '';
+    detail.innerHTML = '';
+    const add = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; detail.appendChild(o); };
+    if (kind === 'mega') {
+      const forms = PKMTeam.megaForms(sid);
+      if (!forms.length) add('', '（该物种无 Mega 形态）'); else forms.forEach(f => add(f.id, f.name));
+    } else if (kind === 'z') PKMMechanics.TYPES.forEach(t => add(t, `${PKMMechanics.TYPE_ZH[t]}Z（${t}）`));
+    else if (kind === 'tera') PKMMechanics.TYPES.forEach(t => add(t, `太晶·${PKMMechanics.TYPE_ZH[t]}（${t}）`));
+    else if (kind === 'dynamax') { add('', '普通极巨化'); if (PKMTeam.gmaxForm(sid)) add('gmax', '超极巨化'); }
+    else add('', '无机制');
+    detail.disabled = !kind;
+    if ([...detail.options].some(o => o.value === prev)) detail.value = prev;
+    detail.dataset.want = detail.value;
+    return detail.value;
   }
   function refreshRowOptions(row) {
     const sid = resolveSpeciesId(row.querySelector('.f-species').value);
@@ -211,6 +252,7 @@
         sel.value = prev;
       }
     });
+    const mechanicDetail = refreshMechanicOptions(row);
     const abInfo = PKMMechanics.abilityInfo(abilitySel.value);
     abilitySel.title = abInfo ? `${abInfo.name}：${abInfo.desc}` : '该特性效果将在后续阶段实现';
     const itemSel = row.querySelector('.f-item');
@@ -237,6 +279,10 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
           ${[0, 1, 2, 3].map(() => `<select class="f-move"></select>`).join('')}
         </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+          <select class="f-mechanic" title="战斗机制"><option value="">机制：无</option><option value="mega">Mega 进化</option><option value="z">Z 招式</option><option value="dynamax">极巨化</option><option value="tera">太晶化</option></select>
+          <select class="f-mechanic-detail" title="机制细节"></select>
+        </div>
         <div class="f-note note"></div>`;
       rootEl.appendChild(row);
       row.querySelector('.f-species').value = spec.species || '';
@@ -244,6 +290,8 @@
       row.querySelector('.f-nature').value = spec.nature || '';
       row.querySelector('.f-ability').dataset.want = spec.ability || '';
       row.querySelector('.f-item').value = spec.item || '';
+      row.querySelector('.f-mechanic').value = spec.mechanic || '';
+      row.querySelector('.f-mechanic-detail').dataset.want = spec.mechanic === 'mega' ? (spec.megaForm || '') : spec.mechanic === 'z' ? (spec.zType || '') : spec.mechanic === 'tera' ? (spec.teraType || '') : spec.mechanic === 'dynamax' ? (spec.dynamaxForm || '') : '';
       row.querySelectorAll('.f-move').forEach((sel, k) => { sel.dataset.want = (spec.moves || [])[k] || ''; });
       refreshRowOptions(row);
       row.querySelector('.f-species').addEventListener('change', () => {
@@ -254,6 +302,7 @@
         saveEditorSpecs(false);
       });
       row.querySelector('.f-level').addEventListener('change', () => { refreshRowOptions(row); saveEditorSpecs(false); });
+      row.querySelector('.f-mechanic').addEventListener('change', () => { refreshMechanicOptions(row); saveEditorSpecs(false); });
       row.addEventListener('change', () => saveEditorSpecs(false));
     });
   }
@@ -266,7 +315,9 @@
       const level = parseInt(row.querySelector('.f-level').value || '50', 10) || 50;
       let moves = [...row.querySelectorAll('.f-move')].map(sel => sel.value).filter(Boolean);
       if (!moves.length) moves = PKMTeam.chooseAutoMoves(sid, level);
-      specs.push({ species: sid, level, nature: row.querySelector('.f-nature').value, ability: row.querySelector('.f-ability').value, item: row.querySelector('.f-item').value, moves });
+      const mechanic = row.querySelector('.f-mechanic').value;
+      const detail = row.querySelector('.f-mechanic-detail').value;
+      specs.push({ species: sid, level, nature: row.querySelector('.f-nature').value, ability: row.querySelector('.f-ability').value, item: row.querySelector('.f-item').value, mechanic, megaForm: mechanic === 'mega' ? detail : '', zType: mechanic === 'z' ? detail : '', teraType: mechanic === 'tera' ? detail : '', dynamaxForm: mechanic === 'dynamax' ? detail : '', moves });
     });
     return specs;
   }
@@ -300,6 +351,12 @@
       const level = 55 + Math.floor(Math.random() * 11);
       team.push({ species: id, level, nature: '', ability: PKMBattle._dex[id].abilities?.[0] || '', item: ['leftovers', 'lifeorb', 'focussash', 'heavydutyboots'][team.length % 4], moves: PKMTeam.chooseAutoMoves(id, level) });
     }
+    team.forEach((spec, i) => {
+      const forms = PKMTeam.megaForms(spec.species);
+      if (i === 0 && forms.length) { spec.mechanic = 'mega'; spec.megaForm = forms[0].id; }
+      else if (i === 1) { spec.mechanic = 'dynamax'; spec.dynamaxForm = PKMTeam.gmaxForm(spec.species) ? 'gmax' : ''; }
+      else if (i === 2) { spec.mechanic = 'tera'; spec.teraType = PKMBattle._dex[spec.species].types[0]; }
+    });
     return team;
   }
 

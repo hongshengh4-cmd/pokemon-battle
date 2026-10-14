@@ -205,5 +205,51 @@ check('机制目录包含特性与道具', Object.keys(MECH.ABILITIES).length >=
   check('弱点保险受克制攻击后双攻+2', char[0].stages.atk === 2 && char[0].stages.spa === 2 && !char[0].item);
 }
 
+
+// Phase 4A: Mega / Z / Dynamax / Terastal (singles)
+check('Mega 形态目录可用', TEAM.megaForms('charizard').map(f => f.id).join(',') === 'charizardmegax,charizardmegay');
+{
+  const char = [E.createPokemon('charizard', 50, ['flamethrower'], { ability: 'Blaze', mechanic: 'mega', megaForm: 'charizardmegay' })];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(char, foe, { seed: 4 });
+  b.turn({ kind: 'move', index: 0, mechanic: 'mega' });
+  check('Mega喷火龙Y变形态/特性/天气', char[0].isMega && char[0].speciesId === 'charizardmegay' && char[0].ability === 'drought' && b.weather === 'sun', `${char[0].speciesId}/${char[0].ability}/${b.weather}`);
+  check('Mega每方只能使用一次', b.mechanicUsed[0].mega === true);
+}
+{
+  const dragon = [E.createPokemon('dragonite', 50, ['dragonclaw'], { mechanic: 'tera', teraType: 'Dragon', ability: 'Multiscale' })];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(dragon, foe, { seed: 4 });
+  const beforeTypes = dragon[0].types.join('/');
+  b.turn({ kind: 'move', index: 0, mechanic: 'tera' });
+  check('太晶化改变防御属性并保留原属性STAB', beforeTypes === 'Dragon/Flying' && dragon[0].terastallized && dragon[0].types.join('/') === 'Dragon' && E.stabMultiplier(dragon[0], dragon[0].moves[0]) === 2);
+}
+{
+  const pika = [E.createPokemon('pikachu', 50, ['thunderbolt'], { mechanic: 'z', zType: 'Electric', item: 'electriumz' })];
+  const foe = [E.createPokemon('snorlax', 100, ['tackle'])];
+  const b = new E.Battle(pika, foe, { seed: 4 });
+  const hpBefore = foe[0].hp;
+  b.turn({ kind: 'move', index: 0, mechanic: 'z' });
+  check('Z招式发动并造成高伤害且只能一次', foe[0].hp < hpBefore && b.mechanicUsed[0].z === true, `damage ${hpBefore - foe[0].hp}`);
+  check('Z招式变换信息', E.transformMove(pika[0], pika[0].moves[0], 'z').basePower >= 175);
+}
+{
+  const venu = [E.createPokemon('venusaur', 50, ['seedbomb'], { mechanic: 'dynamax', dynamaxForm: 'gmax' })];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(venu, foe, { seed: 4 });
+  const maxBefore = venu[0].maxHp, hpBefore = venu[0].hp;
+  b.turn({ kind: 'move', index: 0, mechanic: 'dynamax' });
+  check('极巨化HP翻倍并进入3回合状态', venu[0].dynamaxed && venu[0].maxHp === maxBefore * 2 && venu[0].hp === hpBefore + maxBefore && venu[0].speciesId === 'venusaurgmax');
+  check('极巨招式变换', E.transformMove(venu[0], venu[0].moves[0]).name.startsWith('G-Max') || E.transformMove(venu[0], venu[0].moves[0])._isMax);
+  b.endOfTurn(); b.endOfTurn();
+  check('极巨化到期后HP与形态恢复', !venu[0].dynamaxed && venu[0].maxHp === maxBefore && venu[0].speciesId === 'venusaur');
+}
+{
+  const bad = TEAM.validateTeam([{ species: 'charizard', level: 50, mechanic: 'mega', megaForm: 'venusaurmega', moves: ['flamethrower'] }]);
+  check('错误Mega形态会被校验拦下', bad.ok === false && bad.errors.length > 0, bad.errors.join('；'));
+  const good = TEAM.validateTeam([{ species: 'pikachu', level: 50, mechanic: 'z', zType: 'Electric', moves: ['thunderbolt'] }]);
+  check('合法Z配置校验通过', good.ok === true, good.errors.join('；'));
+}
+
 console.log(`\nTOTAL pass=${pass} fail=${fail}`);
 process.exit(fail ? 1 : 0);

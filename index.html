@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>宝可梦对战 · 自研引擎（第三阶段）</title>
+<title>宝可梦对战 · 自研引擎（第四阶段）</title>
 <link rel="stylesheet" href="./src/ui/styles.css">
 </head>
 <body>
@@ -61,10 +61,11 @@
   <div class="grid2" style="margin-top:12px">
     <div>
       <h3 style="margin:4px 0 8px">选择招式</h3>
+      <div class="switches" id="mechanics" style="margin-bottom:8px"></div>
       <div class="moves" id="moves"></div>
       <h3 style="margin:14px 0 8px">换人</h3>
       <div class="switches" id="switches"></div>
-      <p class="note">规则（第三阶段）：单打、6v6 队伍、优先度/速度判定、命中、会心、异常状态、首批高频特性与常用道具、天气/四种场地、隐形岩/撒菱/毒菱/黏黏网、双墙/极光幕、顺风与戏法空间。</p>
+      <p class="note">规则（第四阶段A）：单打、6v6 队伍、特性与道具、天气/场地/钉子/墙，并已加入 Mega 进化、Z 招式、极巨化/超极巨化、太晶化（每方每种机制一场一次，在出招前点机制按钮）。双打 2v2 将作为下一小阶段单独接入。</p>
     </div>
     <div>
       <h3 style="margin:4px 0 8px">战斗日志</h3>
@@ -74,7 +75,7 @@
 
   <details style="margin-top:14px" open>
     <summary><b>队伍编辑器（合法配招）</b></summary>
-    <p class="note">招式下拉只会列出该宝可梦在现行世代（Gen 9）学习面内的合法招式；可同时设置特性与当前已实现效果的道具。编辑会自动保存在本机浏览器中；勾选后点上方“开始新战斗”即按编辑队伍开战。未实现效果的特性/道具会在校验中明确提示，不会假装生效。</p>
+    <p class="note">招式下拉只会列出该宝可梦在现行世代（Gen 9）学习面内的合法招式；可同时设置特性、道具与战斗机制（Mega 形态、Z 属性、极巨化/超极巨化、太晶属性）。编辑会自动保存在本机浏览器中；勾选后点上方“开始新战斗”即按编辑队伍开战。</p>
     <div class="controls" style="margin-bottom:8px">
       <button id="btn-validate" class="blue" type="button">校验两队</button>
       <button id="btn-save-teams" type="button">保存编辑</button>

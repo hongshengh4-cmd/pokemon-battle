@@ -7,6 +7,8 @@
  * boosts/drain/recoil/heal/multihit from Showdown-style move data,
  * switching, simple AI. Phase 3 adds a curated ability/item set, weather
  * abilities/moves, terrains, entry hazards, screens, Tailwind and Trick Room.
+ * Phase 4A adds Mega Evolution, Z-Moves, Dynamax/Gigantamax and Terastallization
+ * in singles (doubles remains a separate later refactor).
  */
 (function (root) {
   'use strict';
@@ -199,18 +201,94 @@
       return { id: normId(mid), ...m, ppLeft: m.pp ?? 10 };
     });
     if (!moves.length) throw new Error('Pokemon needs at least one move: ' + speciesId);
+    const item = opts.item ? normId(opts.item) : null;
+    const zType = MECH?.canonType(opts.zType || opts.zMoveType) || MECH?.typeForZCrystal(item) || null;
+    let mechanic = normId(typeof opts.mechanic === 'string' ? opts.mechanic : (opts.mechanic?.kind || opts.mechanic?.type || ''));
+    if (mechanic.includes('mega')) mechanic = 'mega';
+    else if (mechanic.includes('tera')) mechanic = 'tera';
+    else if (mechanic.includes('dynamax') || mechanic.includes('gigantamax') || mechanic.includes('gmax')) mechanic = 'dynamax';
+    else if (mechanic === 'z' || mechanic.includes('zmove')) mechanic = 'z';
+    if (!mechanic && (opts.megaForm || opts.mega)) mechanic = 'mega';
+    if (!mechanic && opts.teraType) mechanic = 'tera';
+    if (!mechanic && zType && item) mechanic = 'z';
+    if (!['mega', 'z', 'dynamax', 'tera'].includes(mechanic)) mechanic = null;
     return {
-      speciesId: id, name: opts.nickname || species.name, speciesName: species.name,
-      types: species.types.slice(), level, stats, maxHp: stats.hp, hp: stats.hp,
+      speciesId: id, originalSpeciesId: id, name: opts.nickname || species.name, speciesName: species.name, hasNickname: !!opts.nickname,
+      types: species.types.slice(), originalTypes: species.types.slice(), level, stats, maxHp: stats.hp, hp: stats.hp,
+      ivs: Object.assign({ hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 }, opts.ivs || {}), nature: opts.nature || '',
       moves, status: null, statusTurns: 0, toxicCounter: 1, sleepTurns: 0,
       stages: { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 },
-      volatile: {}, ability: opts.ability ? normId(opts.ability) : (normId(species.abilities?.[0] ?? '') || null), item: opts.item ? normId(opts.item) : null,
+      volatile: {}, ability: opts.ability ? normId(opts.ability) : (normId(species.abilities?.[0] ?? '') || null), item,
       gender: opts.gender || null, shiny: !!opts.shiny, fainted: false,
+      mechanic, megaForm: opts.megaForm || opts.mega ? normId(opts.megaForm || opts.mega) : null,
+      teraType: MECH?.canonType(opts.teraType) || null, terastallized: false,
+      zType, dynamaxForm: opts.dynamaxForm === 'gmax' || opts.gmax ? 'gmax' : null,
+      isMega: id.includes('mega'), dynamaxed: false, dynamaxTurns: 0, normalMaxHp: null, _preDynamax: null,
       choiceLockedMove: null, enteredTurn: 0, _enteredThisTurn: false, _side: null,
     };
   }
 
   function effStat(p, key) { return battleStat(p, key); }
+
+  function stabMultiplier(attacker, move) {
+    if (!move?.type) return 1;
+    const adaptable = hasAbility(attacker, 'adaptability');
+    if (attacker.terastallized && attacker.teraType) {
+      const tera = move.type === attacker.teraType;
+      const original = (attacker.originalTypes || []).includes(move.type);
+      if (tera && original) return adaptable ? 2.25 : 2;
+      if (tera || original) return adaptable ? 2 : 1.5;
+      return 1;
+    }
+    if ((attacker.types || []).includes(move.type)) return adaptable ? 2 : 1.5;
+    return 1;
+  }
+  function zMovePower(move) {
+    const bp = move.basePower || 0;
+    if (bp <= 55) return 100; if (bp <= 65) return 120; if (bp <= 75) return 140; if (bp <= 85) return 160;
+    if (bp <= 95) return 175; if (bp <= 100) return 180; if (bp <= 110) return 185; if (bp <= 120) return 190;
+    if (bp <= 130) return 195; return 200;
+  }
+  function maxMovePower(move) {
+    const bp = move.basePower || 0;
+    let power = bp <= 40 ? 90 : bp <= 50 ? 100 : bp <= 60 ? 110 : bp <= 70 ? 120 : bp <= 80 ? 130 : bp <= 90 ? 130 : bp <= 100 ? 135 : bp <= 110 ? 140 : bp <= 120 ? 145 : 150;
+    if (['Fighting', 'Poison'].includes(move.type)) power = Math.max(70, power - 20);
+    return power;
+  }
+  function makeZMove(user, baseMove) {
+    if (!baseMove) return baseMove;
+    if (baseMove.category === 'Status') return { ...baseMove, _isZ: true, _zStatus: true, _baseId: baseMove.id, name: `Z·${baseMove.name}`, accuracy: true };
+    const crystal = MECH?.zCrystalForType(user.zType || baseMove.type);
+    const generic = Object.values(MOVES).find(m => m.isZ && normId(m.isZ) === crystal);
+    return {
+      ...baseMove, id: generic?.id || `z${baseMove.id}`, name: generic?.name || `Z·${baseMove.name}`, basePower: zMovePower(baseMove), accuracy: true,
+      secondary: undefined, secondaries: undefined, self: undefined, drain: undefined, recoil: undefined, multihit: undefined,
+      status: undefined, volatileStatus: undefined, boosts: undefined, _isZ: true, _baseId: baseMove.id,
+    };
+  }
+  function makeMaxMove(user, baseMove) {
+    if (!baseMove) return baseMove;
+    if (baseMove.category === 'Status' || !baseMove.basePower) {
+      const guard = MOVES.maxguard || { id: 'maxguard', name: '极巨防壁', type: 'Normal', category: 'Status', basePower: 0, accuracy: true, pp: 10, priority: 4, target: 'self', volatileStatus: 'maxguard', flags: {} };
+      return { ...guard, _isMax: true, _baseId: baseMove.id, ppLeft: baseMove.ppLeft };
+    }
+    let info = MECH?.maxMoveForType(baseMove.type) || { id: 'maxstrike', name: '极巨攻击' };
+    let name = info.name, id = info.id;
+    if (user.dynamaxForm === 'gmax' && baseMove.type === (user.types || [])[0]) {
+      const g = Object.values(MOVES).find(m => String(m.name || '').startsWith('G-Max') && m.type === baseMove.type);
+      if (g) { id = Object.keys(MOVES).find(k => MOVES[k] === g) || id; name = g.name; }
+    }
+    return {
+      ...baseMove, id, name, basePower: maxMovePower(baseMove) + (name.startsWith('G-Max') ? 10 : 0), accuracy: true,
+      secondary: undefined, secondaries: undefined, self: undefined, drain: undefined, recoil: undefined, multihit: undefined,
+      status: undefined, volatileStatus: undefined, boosts: undefined, _isMax: true, _maxType: baseMove.type, _baseId: baseMove.id,
+    };
+  }
+  function transformMove(user, baseMove, mechanic = null) {
+    if (mechanic === 'z' && user.mechanic === 'z' && user.zType === baseMove.type) return makeZMove(user, baseMove);
+    if (user.dynamaxed) return makeMaxMove(user, baseMove);
+    return baseMove;
+  }
 
   function estimateDamage(attacker, defender, move, rngVal = 0.925, opts = {}) {
     if (!move.basePower) return { damage: 0, eff: 1, crit: false };
@@ -223,9 +301,10 @@
     let dmg = Math.floor(((Math.floor((2 * level / 5 + 2) * power * atk / def)) / 50)) + 2;
     const eff = effectiveness(move.type, defender.types);
     let mult = eff * rngVal;
-    if (attacker.types.includes(move.type)) mult *= hasAbility(attacker, 'adaptability') ? 2 : 1.5; // STAB
+    mult *= stabMultiplier(attacker, move); // STAB (incl. Terastal rules)
     if (isPhys && attacker.status === 'brn' && !hasAbility(attacker, 'guts')) mult *= 0.5;
     mult *= defenderDamageMultiplier(attacker, defender, move, eff);
+    if ((move._isZ || move._isMax) && defender.volatile?.protect) mult *= 0.25;
     dmg = Math.floor(dmg * mult);
     return { damage: eff === 0 ? 0 : Math.max(1, dmg), eff, crit: !!opts.crit };
   }
@@ -244,6 +323,7 @@
       this.log = [];
       this.winner = null; // 0 | 1 | null
       this.pendingSwitch = null; // side index that must switch (player-facing)
+      this.mechanicUsed = [{ mega: false, z: false, dynamax: false, tera: false }, { mega: false, z: false, dynamax: false, tera: false }];
       this.teams.forEach((team, side) => team.forEach(p => { p._battle = this; p._side = side; p._enteredThisTurn = false; }));
       this.say(`战斗开始！${this.cur(1).name} VS ${this.cur(0).name}`);
       [0, 1].sort((a, b) => effStat(this.cur(b), 'spe') - effStat(this.cur(a), 'spe')).forEach(side => this.onEnter(side, true));
@@ -302,7 +382,13 @@
       p.choiceLockedMove = null;
       this.applyEntryHazards(side, p);
       if (p.hp <= 0 || p.fainted) return;
-      const foe = this.cur(this.other(side)), ab = abilityId(p);
+      this.applyEntryAbility(side);
+    }
+    applyEntryAbility(side) {
+      const p = this.cur(side);
+      if (!p || p.fainted || p.hp <= 0) return;
+      const foe = this.cur(this.other(side)); let ab = abilityId(p);
+      if (ab === 'trace' && foe?.ability) { p.ability = abilityId(foe); ab = p.ability; this.say(`${p.name} 的追踪复制了对手的特性！`); }
       const weatherAbility = { drought: 'sun', drizzle: 'rain', sandstream: 'sand', snowwarning: 'snow' }[ab];
       if (weatherAbility) this.setWeather(weatherAbility, 5);
       const terrainAbility = { electricsurge: 'electric', grassysurge: 'grassy', psychicsurge: 'psychic', mistysurge: 'misty' }[ab];
@@ -318,6 +404,58 @@
       }
       if (ab === 'frisk' && foe?.item) this.say(`${p.name} 察觉到了对手携带的道具！`);
       if (ab === 'anticipation' && foe && foe.moves.some(m => m.basePower && effectiveness(m.type, p.types) > 1)) this.say(`${p.name} 因危险而颤抖了（危险预知）！`);
+    }
+    megaEvolve(side) {
+      const p = this.cur(side);
+      if (!p || p.fainted || this.mechanicUsed[side].mega || p.mechanic !== 'mega' || !p.megaForm || !DEX[p.megaForm] || p.isMega) return false;
+      const form = DEX[p.megaForm], hpRatio = p.hp / p.maxHp;
+      p.speciesId = p.megaForm; p.speciesName = form.name; if (!p.hasNickname) p.name = form.name;
+      p.types = form.types.slice(); p.originalTypes = form.types.slice();
+      p.stats = calcStats(form, p.level, { ivs: p.ivs, nature: p.nature });
+      p.maxHp = p.stats.hp; p.hp = Math.max(1, Math.round(p.maxHp * hpRatio));
+      p.ability = normId(form.abilities?.[0] || p.ability);
+      p.isMega = true; this.mechanicUsed[side].mega = true;
+      this.say(`✨ ${p.name} Mega 进化了！`);
+      this.applyEntryAbility(side);
+      return true;
+    }
+    dynamax(side) {
+      const p = this.cur(side);
+      if (!p || p.fainted || this.mechanicUsed[side].dynamax || p.mechanic !== 'dynamax' || p.dynamaxed) return false;
+      p.normalMaxHp = p.maxHp;
+      p._preDynamax = { speciesId: p.speciesId, speciesName: p.speciesName, name: p.name, types: p.types.slice(), stats: p.stats };
+      if (p.dynamaxForm === 'gmax' && DEX[`${p.originalSpeciesId}gmax`]) {
+        const form = DEX[`${p.originalSpeciesId}gmax`];
+        p.speciesId = `${p.originalSpeciesId}gmax`; p.speciesName = form.name; if (!p.hasNickname) p.name = form.name;
+        p.types = form.types.slice(); p.stats = calcStats(form, p.level, { ivs: p.ivs, nature: p.nature });
+      }
+      p.maxHp = (p.normalMaxHp || p.maxHp) * 2;
+      p.hp += p.normalMaxHp;
+      p.dynamaxed = true; p.dynamaxTurns = 3; this.mechanicUsed[side].dynamax = true;
+      this.say(`🔴 ${p.name} ${p.dynamaxForm === 'gmax' ? '超极巨化' : '极巨化'}了！（3 回合）`);
+      return true;
+    }
+    endDynamax(p, silent = false) {
+      if (!p?.dynamaxed) return;
+      const normal = p.normalMaxHp || Math.floor(p.maxHp / 2);
+      if (p._preDynamax) { const pre = p._preDynamax; p.speciesId = pre.speciesId; p.speciesName = pre.speciesName; if (!p.hasNickname) p.name = pre.name; p.types = pre.types.slice(); p.stats = pre.stats; }
+      p.maxHp = normal; p.hp = p.fainted ? 0 : Math.max(1, Math.floor(p.hp / 2));
+      p.dynamaxed = false; p.dynamaxTurns = 0; p.normalMaxHp = null; p._preDynamax = null;
+      if (!silent) this.say(`${p.name} 的极巨化结束了。`);
+    }
+    terastallize(side) {
+      const p = this.cur(side);
+      if (!p || p.fainted || this.mechanicUsed[side].tera || p.mechanic !== 'tera' || !p.teraType || p.terastallized) return false;
+      p.originalTypes = p.types.slice();
+      p.types = [p.teraType]; p.terastallized = true; this.mechanicUsed[side].tera = true;
+      this.say(`💎 ${p.name} 太晶化了！属性变为 ${p.teraType}！`);
+      return true;
+    }
+    activateMechanic(side, kind) {
+      if (kind === 'mega') return this.megaEvolve(side);
+      if (kind === 'dynamax') return this.dynamax(side);
+      if (kind === 'tera') return this.terastallize(side);
+      return false;
     }
     changeStages(p, boosts, source = p, opts = {}) {
       if (!p || p.fainted || !boosts) return false;
@@ -449,10 +587,26 @@
     }
     movePriority(user, move, target) {
       let prio = move.priority || 0;
+      if (user.dynamaxed && move.category === 'Status') prio = 4; // becomes Max Guard
       if (hasAbility(user, 'prankster') && move.category === 'Status') prio += 1;
       if (hasAbility(user, 'galewings') && move.type === 'Flying' && user.hp === user.maxHp) prio += 1;
       if (hasAbility(user, 'triage') && (move.heal || move.flags?.heal)) prio += 3;
       return prio;
+    }
+    applyMaxMoveEffect(user, target, move) {
+      const type = move._maxType || move.type, side = this.sideOf(user);
+      const userBoost = { Fighting: { atk: 1 }, Poison: { spa: 1 }, Flying: { spe: 1 }, Ground: { spd: 1 }, Steel: { def: 1 } }[type];
+      if (userBoost) this.changeStages(user, userBoost, user);
+      const foeDrop = { Normal: { spe: -1 }, Bug: { spa: -1 }, Ghost: { def: -1 }, Dragon: { atk: -1 }, Dark: { spd: -1 } }[type];
+      if (foeDrop && target && !target.fainted) this.changeStages(target, foeDrop, user);
+      if (type === 'Fire') this.setWeather('sun', 5);
+      if (type === 'Water') this.setWeather('rain', 5);
+      if (type === 'Rock') this.setWeather('sand', 5);
+      if (type === 'Grass') this.setTerrain('grassy', 5);
+      if (type === 'Electric') this.setTerrain('electric', 5);
+      if (type === 'Psychic') this.setTerrain('psychic', 5);
+      if (type === 'Fairy') this.setTerrain('misty', 5);
+      if (type === 'Ice') this.setWeather('snow', 5);
     }
 
     /* ---------- AI ---------- */
@@ -508,7 +662,16 @@
         if (mistakes && this.rng() < mistakes) score = this.rng() * 50;
         if (!best || score > best.score) best = { kind: 'move', index: i, score };
       }
-      return best || { kind: 'move', index: 0 };
+      if (!best) return { kind: 'move', index: 0 };
+      const chosenMove = me.moves[best.index];
+      const used = this.mechanicUsed?.[side];
+      if (used && chosenMove) {
+        if (me.mechanic === 'mega' && !used.mega && !me.isMega) best.mechanic = 'mega';
+        else if (me.mechanic === 'dynamax' && !used.dynamax && !me.dynamaxed && chosenMove.basePower && me.hp > me.maxHp * 0.4) best.mechanic = 'dynamax';
+        else if (me.mechanic === 'tera' && !used.tera && !me.terastallized && (chosenMove.type === me.teraType || effectiveness(chosenMove.type, foe.types) > 1)) best.mechanic = 'tera';
+        else if (me.mechanic === 'z' && !used.z && me.zType === chosenMove.type && chosenMove.basePower) best.mechanic = 'z';
+      }
+      return best;
     }
 
     bestSwitch(side) {
@@ -523,10 +686,13 @@
       return best?.index ?? -1;
     }
 
-    doSwitch(side, index) {
+    doSwitch(side, index, opts = {}) {
       const p = this.teams[side][index];
       if (!p || p.fainted || index === this.active[side]) return false;
       const old = this.cur(side);
+      const foe = this.cur(this.other(side));
+      if (!opts.forced && foe && !foe.fainted && hasAbility(foe, 'shadowtag') && !old.types.includes('Ghost')) { this.say(`${old.name} 被踩影困住，无法交换！`); return false; }
+      if (old.dynamaxed && !old.fainted) this.endDynamax(old);
       if (!old.fainted && hasAbility(old, 'regenerator')) this.heal(old, Math.floor(old.maxHp / 3), '再生力回复了体力');
       if (!old.fainted && hasAbility(old, 'naturalcure') && old.status) { old.status = null; this.say(`${old.name} 的自然回复治愈了异常状态。`); }
       old.stages = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
@@ -556,12 +722,17 @@
       ];
       // Switches first.
       for (const a of actions) if (a.action.kind === 'switch') this.doSwitch(a.side, a.action.index);
+      for (const side of [0, 1]) if (this.cur(side)) delete this.cur(side).volatile.protect;
+      // Mega/Dynamax/Tera activate before speed order is calculated.
+      [...actions].filter(a => a.action.kind === 'move' && ['mega', 'dynamax', 'tera'].includes(a.action.mechanic))
+        .sort((a, b) => effStat(this.cur(b.side), 'spe') - effStat(this.cur(a.side), 'spe'))
+        .forEach(a => this.activateMechanic(a.side, a.action.mechanic));
       const movers = actions.filter(a => a.action.kind === 'move').map(a => {
         const p = this.cur(a.side);
         const move = p.moves[a.action.index] || p.moves[0];
         const prio = this.movePriority(p, move, this.cur(this.other(a.side)));
         const speed = effStat(p, 'spe');
-        return { ...a, move, prio, speed, tie: this.rng() };
+        return { ...a, move, prio, speed, tie: this.rng(), mechanic: a.action.mechanic || null };
       });
       const trick = this.field.trickRoom > 0;
       movers.sort((x, y) => (y.prio - x.prio) || (trick ? (x.speed - y.speed) || (x.tie - y.tie) : (y.speed - x.speed) || (x.tie - y.tie)));
@@ -570,7 +741,7 @@
         if (this.winner !== null) break;
         const user = this.cur(m.side);
         if (user.fainted) continue;
-        this.useMove(m.side, user, this.cur(this.other(m.side)), m.move);
+        this.useMove(m.side, user, this.cur(this.other(m.side)), m.move, { mechanic: m.mechanic });
         this.checkFaints();
       }
       this.endOfTurn();
@@ -601,22 +772,28 @@
           return false;
         }
       }
-      if (p.volatile.flinch) { delete p.volatile.flinch; this.say(`${p.name} 退缩了，无法行动！`); if (hasAbility(p, 'steadfast')) this.changeStages(p, { spe: 1 }, p); return false; }
+      if (p.volatile.flinch) { delete p.volatile.flinch; if (p.dynamaxed) { /* Dynamax cannot flinch */ } else { this.say(`${p.name} 退缩了，无法行动！`); if (hasAbility(p, 'steadfast')) this.changeStages(p, { spe: 1 }, p); return false; } }
       return true;
     }
 
-    useMove(side, user, target, move) {
-      if (!this.canMove(user, move)) return;
-      if (move.ppLeft > 0) move.ppLeft--;
-      if (['choiceband', 'choicespecs', 'choicescarf'].includes(itemId(user)) && !user.choiceLockedMove) user.choiceLockedMove = move.id;
+    useMove(side, user, target, baseMove, opts = {}) {
+      let move = baseMove;
+      const wantsZ = opts.mechanic === 'z' && !this.mechanicUsed[side].z && user.mechanic === 'z' && user.zType === baseMove.type;
+      if (wantsZ) move = makeZMove(user, baseMove);
+      if (user.dynamaxed) move = makeMaxMove(user, baseMove);
+      if (!this.canMove(user, baseMove)) return;
+      if (baseMove.ppLeft > 0) baseMove.ppLeft--;
+      if (wantsZ) { this.mechanicUsed[side].z = true; this.say(`💥 ${user.name} 发动了 Z 招式！`); }
+      if (['choiceband', 'choicespecs', 'choicescarf'].includes(itemId(user)) && !user.choiceLockedMove) user.choiceLockedMove = baseMove.id;
       this.say(`${user.name} 使用了 ${move.name}！`);
       const selfTarget = !move.basePower && (move.heal || (move.boosts && move.target === 'self') || move.status === undefined && move.volatileStatus === undefined);
       const realTarget = (move.target === 'self' || selfTarget) ? user : target;
-      if (realTarget !== user && hasAbility(realTarget, 'pressure') && move.ppLeft > 0) move.ppLeft--;
+      if (realTarget !== user && hasAbility(realTarget, 'pressure') && baseMove.ppLeft > 0) baseMove.ppLeft--;
       const priority = this.movePriority(user, move, realTarget);
       if (realTarget !== user && priority > 0 && hasAbility(realTarget, 'dazzling', 'queenlymajesty', 'armortail')) { this.say(`${realTarget.name} 的特性阻止了先制招式！`); return; }
       if (realTarget !== user && priority > 0 && this.field.terrain === 'psychic' && isGrounded(realTarget)) { this.say('精神场地保护着宝可梦，先制招式失败了！'); return; }
       if (realTarget !== user && hasAbility(user, 'prankster') && move.category === 'Status' && realTarget.types.includes('Dark')) { this.say(`对 ${realTarget.name} 没有效果……`); return; }
+      if (realTarget !== user && realTarget.volatile.protect && move.flags?.protect && !(move.basePower && (move._isZ || move._isMax))) { this.say(`${realTarget.name} 守住了攻击！`); return; }
       const interaction = realTarget !== user ? abilityMoveInteraction(user, realTarget, move) : null;
       if (interaction) {
         this.say(`${realTarget.name} 的${interaction.label}使招式没有效果！`);
@@ -644,6 +821,7 @@
         let connected = true;
         if (move.basePower) {
           let critStage = move.critRatio || 0;
+          critStage += user.volatile.critBoost || 0;
           if (hasAbility(user, 'superluck')) critStage += 1;
           if (['scopelens', 'razorclaw'].includes(itemId(user))) critStage += 1;
           const crit = !hasAbility(realTarget, 'battlearmor', 'shellarmor') && this.rng() < [1 / 24, 1 / 8, 1 / 2, 1][Math.min(3, critStage)];
@@ -675,6 +853,7 @@
         if (move.self && !user.fainted) this.applyEffects(user, user, move, move.self);
         if (user.fainted) break;
       }
+      if (anyHit && move._isMax && !user.fainted) this.applyMaxMoveEffect(user, realTarget, move);
       if (anyHit && ['rapidspin', 'mortalspin'].includes(move.id) && !user.fainted) {
         if (this.clearHazards(this.sideOf(user))) this.say(`${user.name} 清除了自己一方的钉子！`);
       }
@@ -686,6 +865,14 @@
       if (!eff) return;
       if (eff.self && eff !== move) this.applyEffects(user, user, move, eff.self);
       if (eff === move) {
+        if (move._zStatus && move.zMove && !move._zApplied) {
+          move._zApplied = true;
+          const z = move.zMove;
+          if (z.boost) this.changeStages(user, z.boost, user);
+          if (z.effect === 'clearnegativeboost') { for (const k of Object.keys(user.stages)) if (user.stages[k] < 0) user.stages[k] = 0; this.say(`${user.name} 的降低能力被 Z 力量清除了！`); }
+          if (z.effect === 'crit2') { user.volatile.critBoost = 2; this.say(`${user.name} 的 Z 力量让它更容易击中要害！`); }
+          if (z.effect === 'heal') this.heal(user, user.maxHp, 'Z 力量完全回复了体力');
+        }
         if (move.weather) this.setWeather(move.weather, 5);
         if (move.terrain) this.setTerrain(move.terrain, 5);
         if (move.pseudoWeather === 'trickroom') {
@@ -722,6 +909,9 @@
           this.changeStages(user, { atk: 1, spe: 1 }, user);
         }
         if (move.id === 'courtchange') { const tmp = this.field.sides[0]; this.field.sides[0] = this.field.sides[1]; this.field.sides[1] = tmp; this.say('双方交换了场地效果！'); }
+      }
+      if ((eff.volatileStatus === 'protect' || eff.volatileStatus === 'maxguard') && target === user) {
+        user.volatile.protect = true; this.say(`${user.name} 摆出了守护的姿势！`);
       }
       if (eff.status) {
         const who = eff.target === 'self' ? user : target;
@@ -769,7 +959,7 @@
     /** Player forced switch after a faint. */
     forceSwitch(index) {
       if (this.pendingSwitch !== 0) return false;
-      if (!this.doSwitch(0, index)) return false;
+      if (!this.doSwitch(0, index, { forced: true })) return false;
       this.pendingSwitch = null;
       this.checkFaints();
       this.updateWinner();
@@ -821,6 +1011,7 @@
         if (sc.tailwind > 0 && --sc.tailwind === 0) this.say('顺风停了。');
       }
       if (this.weatherTurns > 0 && --this.weatherTurns === 0) { this.say('天气恢复了正常。'); this.weather = null; }
+      for (const side of [0, 1]) { const p = this.cur(side); if (p?.dynamaxed && --p.dynamaxTurns <= 0) this.endDynamax(p); }
     }
 
     updateWinner() {
@@ -833,14 +1024,15 @@
         turns: this.turnCount,
         weather: this.weather,
         field: JSON.parse(JSON.stringify(this.field)),
-        playerTeam: this.teams[0].map(p => ({ species: p.speciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted, status: p.status, ability: p.ability, item: p.item })),
-        enemyTeam: this.teams[1].map(p => ({ species: p.speciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted, status: p.status, ability: p.ability, item: p.item })),
+        mechanicUsed: JSON.parse(JSON.stringify(this.mechanicUsed)),
+        playerTeam: this.teams[0].map(p => ({ species: p.speciesId, baseSpecies: p.originalSpeciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted, status: p.status, ability: p.ability, item: p.item, mechanic: p.mechanic, isMega: p.isMega, terastallized: p.terastallized, teraType: p.teraType, dynamaxed: p.dynamaxed })),
+        enemyTeam: this.teams[1].map(p => ({ species: p.speciesId, baseSpecies: p.originalSpeciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted, status: p.status, ability: p.ability, item: p.item, mechanic: p.mechanic, isMega: p.isMega, terastallized: p.terastallized, teraType: p.teraType, dynamaxed: p.dynamaxed })),
         log: this.log.slice(),
       };
     }
   }
 
-  const api = { setData, createPokemon, calcStats, effStat, estimateDamage, Battle, normId, STATUS_NAMES, abilityId, itemId, isGrounded };
+  const api = { setData, createPokemon, calcStats, effStat, estimateDamage, Battle, normId, STATUS_NAMES, abilityId, itemId, isGrounded, transformMove, makeZMove, makeMaxMove, stabMultiplier };
   root.PKMBattle = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
