@@ -1,7 +1,7 @@
 {
   "name": "pokemon-battle",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.9.4",
   "type": "module",
   "scripts": {
     "test": "node tests/run-tests.mjs && node tests/sprite-anchor.test.mjs && node tests/sprite-sizing.test.mjs && node tests/capture.test.mjs",

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>宝可梦对战系统</title>
-<link rel="stylesheet" href="./src/ui/styles.css?v=0.9.0">
+<link rel="stylesheet" href="./src/ui/styles.css?v=0.9.4">
 </head>
 <body>
 <header class="top">
@@ -58,6 +58,8 @@
 
     <section class="fighter player">
       <div class="sprite" id="p-sprite"><span class="fallback">？</span></div>
+      <!-- v0.9.2 战斗机制道具（超级进化石 / Ｚ晶石 / 极巨腕带 / 太晶珠），挂在我方血条框左侧 -->
+      <div class="mechanic-slot" id="mechanics" aria-label="战斗机制道具"></div>
       <div class="fighter-info">
         <span class="side-label player-label">我方</span>
         <div class="name" id="p-name">—</div>
@@ -88,7 +90,7 @@
 
     <div class="card action-card" id="action-card" aria-label="战斗行动菜单">
       <div class="command-heading">
-        <div><span class="encounter-tag" id="encounter-tag">训练家对战</span><h3 id="command-title">请选择行动</h3></div>
+        <div class="command-heading-text"><span class="encounter-tag" id="encounter-tag">训练家对战</span><h3 id="command-title">请选择行动</h3></div>
         <button id="command-back" class="command-back" type="button" hidden>‹ 返回</button>
       </div>
       <div id="command-home" class="command-home">
@@ -97,7 +99,6 @@
         <button type="button" id="command-balls" class="command-choice choice-balls"><span class="mini-ball" aria-hidden="true"></span><strong>精灵球</strong><small id="capture-availability">仅限野生宝可梦</small><b aria-hidden="true">↗</b></button>
       </div>
       <div id="command-fight-panel" class="command-panel fight-panel" hidden>
-        <div class="switches mechanics" id="mechanics"></div>
         <div class="moves" id="moves"></div>
       </div>
       <div id="command-switch-panel" class="command-panel" hidden><div class="switches" id="switches"></div></div>
@@ -160,19 +161,20 @@
     </div>
   </details>
 
-  <footer class="footer-note">非官方同人练习项目 · 数据来自公开资料 · 精灵图加载失败时会自动显示占位图 · 版本 v0.9.0</footer>
+  <footer class="footer-note">非官方同人练习项目 · 数据来自公开资料 · 精灵图加载失败时会自动显示占位图 · 版本 v0.9.4</footer>
 </main>
 
-<script src="./src/engine/typechart.js?v=0.9.0"></script>
-<script src="./src/engine/mechanics.js?v=0.9.0"></script>
-<script src="./src/engine/battle.js?v=0.9.0"></script>
-<script src="./src/engine/capture.js?v=0.9.0"></script>
-<script src="./src/world/save.js?v=0.9.0"></script>
-<script src="./src/ui/capture-fx.js?v=0.9.0"></script>
-<script src="./src/engine/team.js?v=0.9.0"></script>
-<script src="./src/data/presets.js?v=0.9.0"></script>
-<script src="./src/ui/sprite-anchor.js?v=0.9.0"></script>
-<script src="./src/ui/sprite-sizing.js?v=0.9.0"></script>
-<script src="./src/ui/app.js?v=0.9.0"></script>
+<script src="./src/engine/typechart.js?v=0.9.4"></script>
+<script src="./src/engine/mechanics.js?v=0.9.4"></script>
+<script src="./src/ui/mechanic-items.js?v=0.9.4"></script>
+<script src="./src/engine/battle.js?v=0.9.4"></script>
+<script src="./src/engine/capture.js?v=0.9.4"></script>
+<script src="./src/world/save.js?v=0.9.4"></script>
+<script src="./src/ui/capture-fx.js?v=0.9.4"></script>
+<script src="./src/engine/team.js?v=0.9.4"></script>
+<script src="./src/data/presets.js?v=0.9.4"></script>
+<script src="./src/ui/sprite-anchor.js?v=0.9.4"></script>
+<script src="./src/ui/sprite-sizing.js?v=0.9.4"></script>
+<script src="./src/ui/app.js?v=0.9.4"></script>
 </body>
 </html>

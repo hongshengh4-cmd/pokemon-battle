@@ -740,6 +740,11 @@
     if (view !== 'fight') selectedMechanic = null;
     render();
   }
+  // v0.9.1: a resolved action keeps the player on the panel they acted from. Moves and every
+  // kind of switch land on the move list (the next thing to pick is almost always a move);
+  // a failed throw keeps the ball bag open. Faint / battle end still override in renderCommands.
+  function panelForAction(action) { return action?.kind === 'capture' ? 'balls' : 'fight'; }
+  function viewAfterAction(action) { return battle && battle.pendingSwitch !== null ? 'switch' : panelForAction(action); }
   function renderCommands() {
     if (!battle) return;
     const ended = battle.winner !== null && !animating;
@@ -748,7 +753,7 @@
     const view = menuView;
     for (const [id, value] of [['command-home','home'],['command-fight-panel','fight'],['command-switch-panel','switch'],['command-balls-panel','balls'],['command-end','end']]) $(id).hidden = view !== value;
     $('command-title').textContent = animating ? '行动进行中…' : ended ? (battle.outcome === 'captured' ? '收服成功！' : '本场战斗已结束')
-      : battle.pendingSwitch !== null ? '请选择下一只出战宝可梦' : ({home: `${displayPokemonName(battle.cur(0))}，要做什么？`, fight: '选择本回合招式', switch: '选择出战宝可梦', balls: '选择精灵球'}[view]);
+      : battle.pendingSwitch !== null ? '请选择下一只出战宝可梦' : ({home: `${displayPokemonName(battle.cur(0))}，要做什么？`, fight: `${displayPokemonName(battle.cur(0))} · 选择招式`, switch: '选择出战宝可梦', balls: '选择精灵球'}[view]);
     const isWild = battle.encounterType === 'wild';
     $('encounter-tag').textContent = `${isWild ? '野生遭遇' : '训练家对战'} · 第 ${battle.turnCount + (ended ? 0 : 1)} 回合`;
     $('encounter-tag').classList.toggle('wild', isWild);
@@ -757,7 +762,9 @@
     for (const id of ['command-fight','command-switch','command-balls']) $(id).disabled = animating || ended;
     $('capture-availability').textContent = isWild ? '投出精灵球 / 捕获伙伴' : '训练家的宝可梦不可捕获';
     $('command-balls').classList.toggle('capture-unavailable', !isWild);
-    $('command-status').textContent = commandMessage || (animating ? '请等待当前演出结束。' : view === 'home' ? '先选择行动，再决定招式、队友或精灵球。' : view === 'fight' ? '返回不消耗回合；选中招式后才开始行动。' : '');
+    const mst = animating || ended ? null : mechanicState(battle.cur(0));
+    const fightHint = mst?.state === 'armed' ? `已装备${mst.name}：选择招式后发动${mst.short}；再点道具可取消。` : mst?.state === 'ready' ? `点击血条框左侧的${mst.name}可${mst.short}；选中招式后才开始行动。` : '返回不消耗回合；选中招式后才开始行动。';
+    $('command-status').textContent = commandMessage || (animating ? '请等待当前演出结束。' : view === 'home' ? '先选择行动，再决定招式、队友或精灵球。' : view === 'fight' ? fightHint : '');
     if (ended) $('command-end-text').textContent = battle.outcome === 'captured'
       ? `${displayPokemonName(battle.cur(1))} 已收入仓库${worldStore.error ? '（当前仅临时保存，请导出）' : '并保存到本机'}。可在仓库选择位置加入下场编队。`
       : isWild ? '这次遭遇结束了。可以继续寻找新的野生宝可梦。' : '对战结束。也可以进入野生遭遇，收服新的伙伴。';
@@ -789,7 +796,7 @@
     const duration = playTurnAnimations(before, action, logStart) || 1400;
     setTimeout(() => {
       if (battle !== ref) return;
-      animating = false; commandMessage = ''; menuView = battle.pendingSwitch !== null ? 'switch' : 'home'; after();
+      animating = false; commandMessage = ''; menuView = viewAfterAction(action); after();
     }, duration);
   }
   async function captureAction(ball) {
@@ -827,7 +834,7 @@
     if (attempt.success) {
       animating = false; commandMessage = worldStore.error || ''; menuView = 'end'; after();
     } else {
-      commandMessage = '没有抓住，野生宝可梦开始行动。'; after();
+      commandMessage = '没有抓住，野生宝可梦开始行动。'; menuView = 'balls'; after();
       unlockAfterAnimations(before, { kind:'capture' }, logStart);
     }
   }
@@ -913,6 +920,66 @@
     renderCollection();
   }
 
+  // v0.9.2: 战斗机制不再是招式栏里的按钮，而是挂在我方血条框左侧的"道具"——
+  // 超级进化石 / Ｚ晶石 / 极巨腕带 / 太晶珠。点一下装备（本回合出招时发动），再点一次取消。
+  // v0.9.3: 道具图标优先用 Pokémon Showdown 的 itemicons-sheet（与精灵图同一 CDN）；预加载失败则退回矢量图。
+  let psItemSheet = 'pending';
+  function preloadItemSheet() {
+    if (!globalThis.PKMMechanicItems || psItemSheet !== 'pending' || typeof Image === 'undefined') return;
+    const img = new Image();
+    img.onload = () => { psItemSheet = 'ok'; };
+    img.onerror = () => { psItemSheet = 'error'; if (battle) render(); };
+    img.src = PKMMechanicItems.PS_SHEET.url;
+  }
+  function mechanicArt(st) {
+    const icon = st.icon;
+    if (icon && icon.kind === 'sheet' && psItemSheet !== 'error') {
+      return `<span class="ps-item-icon" style="--ix:${icon.x};--iy:${icon.y}" data-item="${PKMMechanicItems.esc(icon.item || '')}"></span>`;
+    }
+    if (icon && icon.kind === 'pixel') return icon.svg;
+    return st.svg;
+  }
+  function mechanicState(me) {
+    if (!battle || !me || !me.mechanic || !globalThis.PKMMechanicItems) return null;
+    const info = PKMMechanicItems.describe(me, PKMBattle._dex);
+    if (!info) return null;
+    const kind = me.mechanic;
+    const spentFlag = !!battle.mechanicUsed[0][kind] || (kind === 'mega' && me.isMega) || (kind === 'tera' && me.terastallized);
+    let state, label = info.name, title;
+    if (kind === 'dynamax' && me.dynamaxed) {
+      state = 'in-effect'; label = `${info.short}中`; title = `${info.short}进行中。`;
+    } else if (spentFlag) {
+      state = 'spent'; label = '已发动'; title = `${info.name}本场战斗已经使用过了。`;
+    } else if (kind === 'z' && !me.moves.some(m => m.type === me.zType)) {
+      state = 'waiting'; title = `需要有「${zhType(me.zType)}」属性的招式才能使用${info.name}。`;
+    } else if (selectedMechanic === kind) {
+      state = 'armed'; label = `✓ ${info.short}`; title = `已装备${info.name}：选择招式后发动${info.short}；再点一次取消。`;
+    } else {
+      state = 'ready'; title = `${info.name}：点击装备，本回合出招时${info.short}；再点一次取消。`;
+    }
+    return { ...info, state, label, title };
+  }
+  function renderMechanicItem(me, over) {
+    const root = $('mechanics');
+    root.replaceChildren();
+    const st = mechanicState(me);
+    if (!st) { if (selectedMechanic) selectedMechanic = null; return; }
+    if (st.state !== 'armed' && st.state !== 'ready' && selectedMechanic) selectedMechanic = null;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `mechanic-item kind-${st.kind}`;
+    b.dataset.kind = st.kind; b.dataset.state = st.state;
+    b.disabled = over || animating || battle.pendingSwitch !== null || !(st.state === 'ready' || st.state === 'armed');
+    b.title = st.title; b.setAttribute('aria-label', `${st.name}（${st.label}）`); b.setAttribute('aria-pressed', String(st.state === 'armed'));
+    b.innerHTML = `<span class="mechanic-art">${mechanicArt(st)}</span><span class="mechanic-label">${PKMMechanicItems.esc(st.label)}</span>`;
+    b.onclick = () => {
+      if (!battle || animating || battle.winner !== null || battle.pendingSwitch !== null) return;
+      selectedMechanic = selectedMechanic === st.kind ? null : st.kind;
+      if (selectedMechanic && menuView !== 'fight') menuView = 'fight'; // 装备道具后直接进入招式页
+      render();
+    };
+    root.appendChild(b);
+  }
   function render() {
     if (!battle) return;
     const me = battle.cur(0), foe = battle.cur(1);
@@ -972,20 +1039,7 @@
 
     const over = battle.winner !== null;
     if (battle.pendingSwitch !== null) selectedMechanic = null;
-    const mechRoot = $('mechanics');
-    mechRoot.innerHTML = '';
-    const mechanicLabels = { mega: '✨ 超级进化', z: '💥 Ｚ招式', dynamax: '🔴 极巨化', tera: '💎 太晶化' };
-    if (me.mechanic && !battle.mechanicUsed[0][me.mechanic] && !(me.mechanic === 'mega' && me.isMega) && !(me.mechanic === 'dynamax' && me.dynamaxed) && !(me.mechanic === 'tera' && me.terastallized)) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'mechanic-btn' + (selectedMechanic === me.mechanic ? ' active' : '');
-      const zReady = me.mechanic !== 'z' || me.moves.some(m => m.type === me.zType);
-      b.disabled = over || animating || battle.pendingSwitch !== null || !zReady;
-      b.textContent = (selectedMechanic === me.mechanic ? '已选 · ' : '') + mechanicLabels[me.mechanic] + (me.mechanic === 'z' ? `（${zhType(me.zType)}）` : me.mechanic === 'tera' ? `（${zhType(me.teraType)}）` : '');
-      b.title = '点击后，再选择本回合招式；再次点击可取消';
-      b.onclick = () => { selectedMechanic = selectedMechanic === me.mechanic ? null : me.mechanic; render(); };
-      mechRoot.appendChild(b);
-    } else if (selectedMechanic) selectedMechanic = null;
+    renderMechanicItem(me, over);
 
     const moves = $('moves');
     moves.innerHTML = '';
@@ -1015,7 +1069,7 @@
         if (animating) return;
         if (battle.pendingSwitch !== null) {
           const before = snapshotBattle(), logStart = battle.log.length;
-          if (battle.forceSwitch(i)) { animating = true; commandMessage = ''; menuView = 'home'; after(); requestAnimationFrame(() => unlockAfterAnimations(before, { kind: 'switch' }, logStart)); }
+          if (battle.forceSwitch(i)) { animating = true; commandMessage = ''; menuView = 'fight'; after(); requestAnimationFrame(() => unlockAfterAnimations(before, { kind: 'switch' }, logStart)); }
         }
         else act({ kind: 'switch', index: i });
       };
@@ -1059,7 +1113,7 @@
     const finishTurn = () => {
       if (battle !== battleRef) return;
       battle.turn(a);
-      selectedMechanic = null; menuView = 'home';
+      selectedMechanic = null; menuView = panelForAction(a); // stay on the move list while the turn plays out
       after();
       requestAnimationFrame(() => unlockAfterAnimations(before, chosen, logStart));
     };
@@ -1355,6 +1409,7 @@
     PKMBattle.setData(dex, moves);
     PKMTeam.setData(dex, moves, learnsets);
     PKMBattle._dex = dex; PKMBattle._moves = moves;
+    preloadItemSheet();
     buildTextPairs();
     const dl = $('species-list');
     Object.entries(dex)

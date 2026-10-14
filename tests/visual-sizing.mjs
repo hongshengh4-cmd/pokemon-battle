@@ -14,6 +14,10 @@ const feet={};for(const e of Object.values(spriteMap))for(const side of ['front'
 const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
 const page=await browser.newPage({viewport:{width:1365,height:960}});
 const waitIdle=()=>page.waitForFunction(()=>document.querySelector('#action-card')?.getAttribute('aria-busy')==='false',{},{timeout:18000});
+// v0.9.1: a resolved action stays on the panel it came from, so navigate like a player would: back first, then the wanted command.
+const goHome=async()=>{if(await page.locator('#command-back').isVisible())await page.locator('#command-back').click();};
+const openFight=async()=>{if(!(await page.locator('#moves').isVisible())){await goHome();await page.locator('#command-fight').click();}};
+const openSwitch=async()=>{if(!(await page.locator('#switches').isVisible())){await goHome();await page.locator('#command-switch').click();}};
 const errors=[],results=[];page.on('pageerror',e=>errors.push(e.message));
 await page.route('https://play.pokemonshowdown.com/sprites/**',async route=>{
  const url=route.request().url(),cached=path.join(root,'.cache/body-sprites',crypto.createHash('sha256').update(url).digest('hex')+path.extname(new URL(url).pathname));
@@ -58,19 +62,19 @@ const near=await measure(),far=await measure('e');check('same-species-enemy-pers
 await page.setViewportSize({width:390,height:960});await page.waitForTimeout(250);check('idle-resize-mobile',await measure());
 // Switch through the actual command buttons, not a direct call to UI internals.
 await start(cfg([mon('pikachu'),mon('charizard')]));
-await page.locator('#command-switch').click();await page.locator('#switches button:enabled').first().click();await waitIdle();
+await openSwitch();await page.locator('#switches button:enabled').first().click();await waitIdle();
 const switched=await measure();check('switch-small-to-large',switched);assert.equal(switched.species,'charizard');assert.equal(switched.width,320);await shot('switch-to-charizard');
-await page.locator('#command-switch').click();await page.locator('#switches button:enabled').first().click();await waitIdle();
+await openSwitch();await page.locator('#switches button:enabled').first().click();await waitIdle();
 const back=await measure();check('switch-large-to-small',back);assert.equal(back.species,'pikachu');assert.ok(back.width<170);
 // Dynamax is an explicit exception: tiny creatures grow, then return to normal.
 await start(cfg([mon('pikachu',{mechanic:'dynamax'})]));
-const regular=await measure();await page.locator('#command-fight').click();await page.locator('#mechanics button').click();await page.locator('#moves button').first().click();await waitIdle();
+const regular=await measure();await openFight();await page.locator('#mechanics button').click();await page.locator('#moves button').first().click();await waitIdle();
 const giant=await measure();check('dynamax-pikachu-grown',giant);assert.ok(giant.paintWidth>regular.paintWidth*1.8);await shot('dynamax-pikachu');
-for(let i=0;i<2;i++){await page.locator('#command-fight').click();await page.locator('#moves button').first().click();await waitIdle();}
+for(let i=0;i<2;i++){await openFight();await page.locator('#moves button').first().click();await waitIdle();}
 const ended=await measure();check('dynamax-pikachu-restored',ended);assert.ok(ended.width<170);await shot('dynamax-ended-pikachu');
 // Faint/successor replay temporarily restores the old sprite: size state must follow both swaps.
 await start(cfg([mon('pikachu',{lv:1}),mon('charizard')],[mon('charizard',{lv:100,moves:['flamethrower']})]));
-await page.locator('#command-fight').click();await page.locator('#moves button').first().click();await waitIdle();
+await openFight();await page.locator('#moves button').first().click();await waitIdle();
 // Some engine states require the player's forced switch selection.
 if(await page.locator('#switches button').count()){const s=await measure();if(s.species==='pikachu'){await page.locator('#switches button:enabled').first().click();await waitIdle();}}
 const successor=await measure();check('faint-successor-size',successor);assert.equal(successor.species,'charizard');assert.equal(successor.width,320);
