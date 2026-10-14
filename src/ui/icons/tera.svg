@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 190" role="img" aria-label="自制太晶化图标">
+  <defs>
+    <linearGradient id="teraGem" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ecfeff"/>
+      <stop offset=".32" stop-color="#67e8f9"/>
+      <stop offset=".63" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#fb7185"/>
+    </linearGradient>
+  </defs>
+  <path d="M110 7 169 57 147 148 110 181 73 148 51 57Z" fill="url(#teraGem)" stroke="#155e75" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M51 57h118M110 7 82 57l28 124 28-124Z" fill="none" stroke="#fff" stroke-width="4" opacity=".72"/>
+  <path d="M82 57 73 148M138 57l9 91M51 57l59 31 59-31" fill="none" stroke="#164e63" stroke-width="3" opacity=".42"/>
+  <path d="M110 76l19 19-19 19-19-19Z" fill="#fff" opacity=".84"/>
+  <circle cx="64" cy="30" r="4" fill="#67e8f9"/>
+  <circle cx="158" cy="27" r="5" fill="#fb7185"/>
+  <circle cx="174" cy="94" r="4" fill="#facc15"/>
+</svg>

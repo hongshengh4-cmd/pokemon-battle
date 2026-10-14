@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 250" role="img" aria-label="自制超级进化图标">
+  <defs>
+    <linearGradient id="megaRainbow" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#7c3aed"/>
+      <stop offset=".27" stop-color="#2563eb"/>
+      <stop offset=".5" stop-color="#22c55e"/>
+      <stop offset=".74" stop-color="#facc15"/>
+      <stop offset="1" stop-color="#fb7185"/>
+    </linearGradient>
+    <clipPath id="megaClip"><path d="M110 6c16 30 55 43 53 76-2 31-39 40-57 61-16 19-11 43 4 101-17-32-55-44-53-77 2-31 39-40 57-61 16-19 11-43-4-100Z"/></clipPath>
+  </defs>
+  <path d="M110 6c16 30 55 43 53 76-2 31-39 40-57 61-16 19-11 43 4 101-17-32-55-44-53-77 2-31 39-40 57-61 16-19 11-43-4-100Z" fill="url(#megaRainbow)" stroke="#71345f" stroke-width="7" stroke-linejoin="round"/>
+  <g clip-path="url(#megaClip)">
+    <path d="M30 76c55-29 116-27 166 4l-9 25c-50-23-103-24-149-2Z" fill="#fff" opacity=".5"/>
+    <path d="M31 158c55-29 116-27 166 4l-9 25c-50-23-103-24-149-2Z" fill="#fff" opacity=".34"/>
+    <path d="M110 6c-2 36-17 55-45 74 19 6 38 2 54-11 17-15 14-42-9-63Z" fill="#fff" opacity=".24"/>
+  </g>
+  <path d="M75 78c25-14 51-14 74 1-24 14-50 14-74-1Z" fill="#fff" opacity=".68"/>
+  <path d="M72 161c26-14 53-14 77 1-25 14-52 14-77-1Z" fill="#fff" opacity=".5"/>
+  <circle cx="35" cy="48" r="5" fill="#fb7185"/>
+  <circle cx="187" cy="93" r="4" fill="#38bdf8"/>
+  <circle cx="31" cy="194" r="4" fill="#facc15"/>
+  <circle cx="184" cy="211" r="5" fill="#a78bfa"/>
+</svg>

@@ -3,37 +3,682 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const normId = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  let battle = null, moveCache = {}, selectedMechanic = null;
+  let battle = null, moveCache = {}, selectedMechanic = null, animating = false;
+  let ZH = { species: {}, moves: {}, abilities: {}, natures: {}, types: {}, categories: {} };
+  let SPRITES = {};
+  let SPRITE_FEET = {};
+  let SPRITE_FEETX = {};
+  let textPairs = [], speciesZhToId = {}, textMap = new Map(), textRegex = null;
+  const zhType = t => ZH.types?.[t] || PKMMechanics.TYPE_ZH[t] || t || '无属性';
+  const zhCat = c => ZH.categories?.[c] || ({ Physical: '物理', Special: '特殊', Status: '变化' }[c] || c || '变化');
+  const zhSpecies = (id, fallback = '') => ZH.species?.[normId(id)] || fallback || '未知宝可梦';
+  const zhMove = (id, fallback = '') => ZH.moves?.[normId(id)] || fallback || '未知招式';
+  const zhAbility = (idOrName, fallback = '未知特性') => PKMMechanics.abilityInfo(idOrName)?.name || ZH.abilities?.[normId(idOrName)] || fallback;
+  const zhNature = id => !id ? '无修正' : (ZH.natures?.[normId(id)] || '未知性格');
+  const displayPokemonName = p => p.hasNickname ? p.name : zhSpecies(p.speciesId, p.speciesName || p.name);
+  const displayItemName = item => !item ? '' : (PKMMechanics.ITEMS[item.id]?.name || '未知道具');
+  function displayMoveName(shown, base) {
+    if (!shown) return '未知招式';
+    if (shown._isZ) return `Ｚ招式·${zhMove(shown._baseId || base?.id, base?.name || '')}`;
+    if (shown._isMax) {
+      if (String(shown.id || '').startsWith('gmax')) return `超极巨${zhType(shown.type)}招式`;
+      return zhMove(shown.id, shown.name);
+    }
+    return zhMove(shown.id, shown.name);
+  }
+  function buildTextPairs() {
+    const pairs = [];
+    speciesZhToId = {};
+    for (const [id, name] of Object.entries(ZH.species || {})) if (name && !speciesZhToId[name]) speciesZhToId[name] = id;
+    if (PKMBattle._dex) for (const [id, sp] of Object.entries(PKMBattle._dex)) {
+      const zh = zhSpecies(id, sp.name);
+      pairs.push([sp.name, zh], [id, zh]);
+    }
+    if (PKMBattle._moves) for (const [id, mv] of Object.entries(PKMBattle._moves)) pairs.push([mv.name, zhMove(id, mv.name)], [id, zhMove(id, mv.name)]);
+    const abilityNames = new Set();
+    if (PKMBattle._dex) for (const sp of Object.values(PKMBattle._dex)) for (const a of sp.abilities || []) abilityNames.add(a);
+    for (const a of abilityNames) pairs.push([a, zhAbility(a, a)]);
+    for (const t of PKMMechanics.TYPES) pairs.push([t, zhType(t)]);
+    pairs.push(['Z·', 'Ｚ招式·'], ['Gigantamax', '超极巨化'], ['Dynamax', '极巨化'], ['G-Max', '超极巨'], ['Mega', '超级'], ['Z-Move', 'Ｚ招式'], ['Z Move', 'Ｚ招式'], ['PP', '招式点数'], ['HP', '体力'], ['VS', '对'], ['Lv.', '等级 '], ['Mega Evolution', '超级进化']);
+    textPairs = pairs.filter(([a, b]) => a && b && a !== b).sort((x, y) => y[0].length - x[0].length);
+    textMap = new Map(textPairs);
+    const esc = x => x.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    textRegex = new RegExp(textPairs.map(([from]) => esc(from)).join('|'), 'g');
+  }
+  function translateText(text) {
+    const out = String(text ?? '');
+    return textRegex ? out.replace(textRegex, match => textMap.get(match) || match) : out;
+  }
 
-  const spriteId = p => p.speciesId.replace('megax', '-mega-x').replace('megay', '-mega-y').replace('mega', '-mega').replace('gmax', '-gmax');
-  const spriteUrl = (id, back) => `https://play.pokemonshowdown.com/sprites/${back ? 'gen5-back' : 'ani'}/${id}.${back ? 'png' : 'gif'}`;
+  const spriteFailed = new Set();
+  const spriteSlugFromName = name => String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').replace('-mega-x', '-megax').replace('-mega-y', '-megay').replace('-mega-z', '-megaz');
+  const spriteIdFromSpeciesId = id => String(id || '')
+    .replace(/(mega)([xyz])$/, '-$1$2')
+    .replace(/mega$/, '-mega')
+    .replace(/gmax$/, '-gmax');
+  function spriteCandidates(p) {
+    const form = [], base = [];
+    const add = (list, value) => { const v = String(value || '').trim(); if (v && !list.includes(v)) list.push(v); };
+    add(form, spriteIdFromSpeciesId(p.speciesId));
+    add(form, spriteSlugFromName(p.speciesName));
+    add(form, p.speciesId);
+    add(base, spriteIdFromSpeciesId(p.originalSpeciesId));
+    const baseDex = PKMBattle._dex?.[normId(p.originalSpeciesId)];
+    if (baseDex) add(base, spriteSlugFromName(baseDex.name));
+    add(base, p.originalSpeciesId);
+    const currentDex = PKMBattle._dex?.[normId(p.speciesId)];
+    if (currentDex?.baseSpecies) {
+      const dexBaseId = normId(currentDex.baseSpecies);
+      const dexBase = PKMBattle._dex?.[dexBaseId];
+      if (dexBase) add(base, spriteSlugFromName(dexBase.name));
+      add(base, spriteSlugFromName(currentDex.baseSpecies));
+      add(base, dexBaseId);
+    }
+    const nameSlug = spriteSlugFromName(p.speciesName);
+    for (const suffix of ['-gmax', '-megax', '-megay', '-megaz', '-mega']) {
+      if (nameSlug.endsWith(suffix)) add(base, nameSlug.slice(0, -suffix.length));
+    }
+    // Some combined forms only have an animated sprite under their base form.
+    for (const id of [...base]) if (!form.includes(id)) form.push(id);
+    return { form: form.slice(0, 3), base };
+  }
+  function spriteAttempts(p, back) {
+    const { form, base } = spriteCandidates(p);
+    const attempts = [];
+    const add = (dir, id, ext) => {
+      const url = `https://play.pokemonshowdown.com/sprites/${dir}/${id}.${ext}`;
+      if (!attempts.includes(url)) attempts.push(url);
+    };
+    if (back) {
+      form.forEach(id => add('ani-back', id, 'gif'));
+      base.forEach(id => add('ani-back', id, 'gif'));
+      form.forEach(id => add('gen5-back', id, 'png'));
+      base.forEach(id => add('gen5-back', id, 'png'));
+      form.forEach(id => add('ani', id, 'gif'));
+      base.forEach(id => add('ani', id, 'gif'));
+      form.forEach(id => add('gen5', id, 'png'));
+      base.forEach(id => add('gen5', id, 'png'));
+    } else {
+      form.forEach(id => add('ani', id, 'gif'));
+      base.forEach(id => add('ani', id, 'gif'));
+      form.forEach(id => add('gen5', id, 'png'));
+      base.forEach(id => add('gen5', id, 'png'));
+      form.forEach(id => add('ani-back', id, 'gif'));
+      base.forEach(id => add('ani-back', id, 'gif'));
+    }
+    const fresh = attempts.filter(url => !spriteFailed.has(url));
+    return fresh.length ? fresh : attempts;
+  }
+  // 按离线测量的“脚底位置”（tools/measure-sprites.py）把精灵的脚对齐到地面阴影
+  function groundAlign(img, url, fallbackFrac, fallbackFracX) {
+    const frac = (url && SPRITE_FEET[url] != null) ? SPRITE_FEET[url] : fallbackFrac;
+    if (frac == null || !img.naturalWidth || !img.naturalHeight) return;
+    const box = img.parentElement;
+    if (!box || !img.clientHeight) return;
+    const scale = Math.min(img.clientWidth / img.naturalWidth, img.clientHeight / img.naturalHeight);
+    const contentH = img.naturalHeight * scale;
+    const feetY = img.offsetTop + (img.clientHeight - contentH) / 2 + frac * contentH;
+    const target = box.clientHeight - 27; // 地面阴影椭圆中心约在盒底上方 27px
+    let dy = target - feetY;
+    dy = Math.max(-24, Math.min(115, dy));
+    img.style.translate = `0px ${dy.toFixed(1)}px`;
+    // 阴影横向跟到脚底重心（与盒子中心混合，避免长尾巴等极端情况偏太远）
+    const fracX = (url && SPRITE_FEETX[url] != null) ? SPRITE_FEETX[url] : fallbackFracX;
+    if (fracX != null && box.clientWidth) {
+      const contentW = img.naturalWidth * scale;
+      const feetCX = img.offsetLeft + (img.clientWidth - contentW) / 2 + fracX * contentW;
+      const blended = feetCX * 0.85 + (box.clientWidth / 2) * 0.15;
+      const clamped = Math.max(box.clientWidth * 0.12, Math.min(box.clientWidth * 0.88, blended));
+      box.style.setProperty('--shadow-x', `${clamped.toFixed(1)}px`);
+    }
+  }
   function setSprite(el, p, back) {
     el.innerHTML = '';
+    el.classList.toggle('is-mega', !!p.isMega);
+    el.classList.toggle('is-dynamax', !!p.dynamaxed);
+    const mapped = SPRITES[normId(p.speciesId)] || null;
+    const mappedUrl = mapped ? (back ? mapped.back : mapped.front) : null;
+    let attempts = spriteAttempts(p, back);
+    if (mappedUrl) attempts = [mappedUrl, ...attempts.filter(url => url !== mappedUrl)];
+    let idx = 0;
     const img = new Image();
-    img.alt = p.name;
-    img.src = spriteUrl(spriteId(p), back);
-    img.onerror = () => { img.remove(); const s = document.createElement('span'); s.className = 'fallback'; s.textContent = '🎈'; el.appendChild(s); };
+    img.alt = displayPokemonName(p);
+    img.onload = () => {
+      const url = attempts[idx] || '';
+      let flip = 1;
+      if (back && ((idx === 0 && mapped?.backFallback === 'front') || /\/sprites\/(ani|gen5)\//.test(url))) flip = -1;
+      if (!back && /\/sprites\/(ani-back|gen5-back)\//.test(url)) flip = -1;
+      img.style.setProperty('--flip', String(flip));
+      groundAlign(img, url, back ? mapped?.backFeet : mapped?.frontFeet, back ? mapped?.backFeetX : mapped?.frontFeetX);
+    };
+    img.onerror = () => {
+      if (attempts[idx]) spriteFailed.add(attempts[idx]);
+      idx += 1;
+      if (idx < attempts.length) { img.src = attempts[idx]; return; }
+      img.remove();
+      const s = document.createElement('span');
+      s.className = 'fallback'; s.textContent = '？'; el.appendChild(s);
+    };
+    img.src = attempts[idx];
     el.appendChild(img);
+    if (p.dynamaxed) img.classList.add('state-dynamax');
+    if (p.terastallized) { img.classList.add('state-tera'); img.style.setProperty('--mech', FX_TYPE_COLORS[p.teraType] || '#67e8f9'); }
+    if (p.dynamaxed) {
+      const clouds = document.createElement('span');
+      clouds.className = 'dynamax-clouds' + (p.dynamaxForm === 'gmax' ? ' gmax' : '');
+      clouds.setAttribute('aria-hidden', 'true');
+      clouds.innerHTML = '<i></i><i></i><i></i>';
+      el.appendChild(clouds);
+    }
+    if (p.terastallized) {
+      const jewel = document.createElement('span');
+      jewel.className = `tera-jewel type-${String(p.teraType || 'Normal').toLowerCase()}`;
+      jewel.setAttribute('aria-hidden', 'true');
+      el.appendChild(jewel);
+    }
   }
   const hpClass = ratio => ratio <= 0.2 ? 'hpfill crit' : ratio <= 0.5 ? 'hpfill low' : 'hpfill';
+
+  /* ---------- 战斗动画表现 ---------- */
+  function snapPokemon(p) {
+    return p ? {
+      speciesId: p.speciesId, originalSpeciesId: p.originalSpeciesId, rawName: p.name, name: displayPokemonName(p), hp: p.hp, maxHp: p.maxHp,
+      fainted: p.fainted, status: p.status, isMega: p.isMega, dynamaxed: p.dynamaxed,
+      nameText: displayPokemonName(p) + (p.status ? `（${PKMBattle.STATUS_NAMES[p.status] || p.status}）` : ''),
+      dynamaxForm: p.dynamaxForm, terastallized: p.terastallized, teraType: p.teraType, mechanic: p.mechanic, zType: p.zType,
+    } : null;
+  }
+  function snapshotBattle() {
+    if (!battle) return null;
+    return { active: battle.active.slice(), winner: battle.winner, teams: battle.teams.map(team => team.map(snapPokemon)) };
+  }
+  const spriteEl = side => $(side === 0 ? 'p-sprite' : 'e-sprite');
+  function addClassTemp(el, className, ttl = 900) {
+    if (!el) return;
+    el.classList.remove(className);
+    void el.offsetWidth;
+    el.classList.add(className);
+    setTimeout(() => el.classList.remove(className), ttl);
+  }
+  function animateImg(side, className, ttl = 900) {
+    const box = spriteEl(side);
+    const img = box?.querySelector('img');
+    if (img) addClassTemp(img, className, ttl);
+    if (box) addClassTemp(box, className, ttl);
+  }
+  function addFx(side, className, text = '', ttl = 1100) {
+    const box = spriteEl(side);
+    if (!box) return;
+    const fx = document.createElement('div');
+    fx.className = `fx ${className}`;
+    if (text) fx.textContent = text;
+    box.appendChild(fx);
+    setTimeout(() => fx.remove(), ttl);
+  }
+  function showBanner(text, className = '') {
+    const arena = document.querySelector('.arena');
+    if (!arena || !text) return;
+    arena.querySelector('.fx-banner')?.remove();
+    const banner = document.createElement('div');
+    banner.className = `fx-banner ${className}`;
+    banner.textContent = text;
+    arena.appendChild(banner);
+    setTimeout(() => banner.remove(), 1550);
+  }
+  const FX_TYPE_COLORS = { Normal: '#a8a77a', Fire: '#f08030', Water: '#6390f0', Electric: '#f7d02c', Grass: '#7ac74c', Ice: '#96d9d6', Fighting: '#c22e28', Poison: '#a33ea1', Ground: '#e2bf65', Flying: '#a98ff3', Psychic: '#f95587', Bug: '#a6b91a', Rock: '#b6a136', Ghost: '#735797', Dragon: '#6f35fc', Dark: '#705746', Steel: '#b7b7ce', Fairy: '#d685ad', Stellar: '#7dd3fc' };
+  const MECHANIC_ICON_SRC = {
+    mega: './src/ui/icons/mega.svg',
+    dynamax: './src/ui/icons/dynamax.svg',
+    gmax: './src/ui/icons/gigantamax.svg',
+    gigantamax: './src/ui/icons/gigantamax.svg',
+    tera: './src/ui/icons/tera.svg',
+    z: './src/ui/icons/z.svg',
+  };
+  function spriteUrlForSnapshot(snap, side) {
+    if (!snap?.speciesId) return '';
+    const back = side === 0;
+    const mapped = SPRITES[normId(snap.speciesId)];
+    if (mapped) return back ? mapped.back : mapped.front;
+    const pseudo = { speciesId: snap.speciesId, originalSpeciesId: snap.originalSpeciesId || snap.speciesId, speciesName: snap.rawName || snap.speciesId };
+    return spriteAttempts(pseudo, back)[0] || '';
+  }
+  const waitMs = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const TRANSFORM_BANNERS = {
+    mega: ['超级进化！', 'fx-mega-banner'],
+    dynamax: ['极巨化！', 'fx-dynamax-banner'],
+    gmax: ['超极巨化！', 'fx-dynamax-banner'],
+    tera: ['太晶化！', 'fx-tera-banner'],
+  };
+  function showMechanicIcon(side, kind, ttl = 900) {
+    const box = spriteEl(side);
+    if (!box) return;
+    box.querySelectorAll('.transform-icon-pop').forEach(el => el.remove());
+    const pop = document.createElement('span');
+    pop.className = 'transform-icon-pop';
+    pop.classList.add('icon-' + kind);
+    pop.setAttribute('aria-hidden', 'true');
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = MECHANIC_ICON_SRC[kind] || MECHANIC_ICON_SRC.mega;
+    pop.appendChild(img);
+    box.appendChild(pop);
+    setTimeout(() => pop.remove(), ttl);
+  }
+  function swapSpriteSrc(img, url) {
+    if (!img || !url || img.src === url) return;
+    const originalOnError = img.onerror;
+    img.onerror = () => { img.onerror = originalOnError; };
+    img.src = url;
+    img.addEventListener('load', () => groundAlign(img, url), { once: true });
+    setTimeout(() => { img.onerror = originalOnError; }, 500);
+  }
+  // 与参考卡相同的思路（自研实现）：同一张精灵图上 剪影 → 白光爆发时换图 → 冷却发光
+  async function runTransformPhases(side, kind, opts = {}) {
+    const box = spriteEl(side);
+    const img = box?.querySelector('img');
+    if (!box || !img) return;
+    if (kind === 'mega') {
+      img.classList.add('evo-silhouette');
+      showMechanicIcon(side, 'mega', 1500);
+      await waitMs(880);
+      img.classList.remove('evo-silhouette');
+      img.classList.add('evo-burst');
+      await waitMs(110);
+      if (opts.newUrl) swapSpriteSrc(img, opts.newUrl);
+      if (opts.prefix && opts.readyName) $(opts.prefix + '-name').textContent = opts.readyName;
+      showBanner(...TRANSFORM_BANNERS.mega);
+      await waitMs(230);
+      img.classList.remove('evo-burst');
+      img.classList.add('evo-finish');
+      await waitMs(760);
+      img.classList.remove('evo-finish');
+    } else if (kind === 'dynamax') {
+      box.classList.add('is-dynamax');
+      img.classList.add('dynamax-burst');
+      showMechanicIcon(side, opts.gmax ? 'gmax' : 'dynamax', 950);
+      setTimeout(() => showBanner(...TRANSFORM_BANNERS[opts.gmax ? 'gmax' : 'dynamax']), 200);
+      if (opts.newUrl) {
+        await waitMs(500);
+        swapSpriteSrc(img, opts.newUrl);
+        if (opts.prefix && opts.readyName) $(opts.prefix + '-name').textContent = opts.readyName;
+        await waitMs(340);
+      } else await waitMs(840);
+      img.classList.remove('dynamax-burst');
+    } else if (kind === 'tera') {
+      img.style.setProperty('--mech', FX_TYPE_COLORS[opts.teraType] || '#67e8f9');
+      img.classList.add('tera-burst');
+      showMechanicIcon(side, 'tera', 950);
+      showBanner(...TRANSFORM_BANNERS.tera);
+      await waitMs(840);
+      img.classList.remove('tera-burst');
+      img.classList.add('state-tera');
+    }
+  }
+  // Ｚ招式蓄势（自研表现）：精灵金色辉光颤动蓄满 + 身后光柱升起 + 脚下光环扩散 + 金色火花上升
+  function playMechanicCharge(side, type) {
+    const box = spriteEl(side);
+    if (!box) return;
+    const img = box.querySelector('img');
+    if (img) {
+      img.classList.remove('z-charge');
+      void img.offsetWidth;
+      img.classList.add('z-charge');
+      setTimeout(() => img.classList.remove('z-charge'), 1080);
+    }
+    const pillar = document.createElement('div');
+    pillar.className = 'fx-z-pillar';
+    pillar.setAttribute('aria-hidden', 'true');
+    box.appendChild(pillar);
+    setTimeout(() => pillar.remove(), 1120);
+    const ring = document.createElement('div');
+    ring.className = 'fx-z-ring';
+    ring.setAttribute('aria-hidden', 'true');
+    box.appendChild(ring);
+    setTimeout(() => ring.remove(), 1060);
+    for (let i = 0; i < 6; i++) {
+      const spark = document.createElement('span');
+      spark.className = 'fx-z-spark';
+      spark.textContent = '✦';
+      spark.setAttribute('aria-hidden', 'true');
+      spark.style.left = `${32 + Math.random() * 36}%`;
+      spark.style.top = `${54 + Math.random() * 20}%`;
+      spark.style.fontSize = `${19 + Math.random() * 14}px`;
+      spark.style.animationDelay = `${i * 105 + Math.random() * 70}ms`;
+      box.appendChild(spark);
+      setTimeout(() => spark.remove(), 1900);
+    }
+    showMechanicIcon(side, 'z', 1020);
+    showBanner('Ｚ招式！', 'fx-z-banner');
+  }
+  function showBeam(fromSide, type = 'Normal', big = false) {
+    const arena = document.querySelector('.arena');
+    const from = spriteEl(fromSide), to = spriteEl(fromSide === 0 ? 1 : 0);
+    if (!arena || !from || !to) return;
+    const stage = arena.getBoundingClientRect();
+    const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+    const x1 = a.left + a.width / 2 - stage.left, y1 = a.top + a.height / 2 - stage.top;
+    const x2 = b.left + b.width / 2 - stage.left, y2 = b.top + b.height / 2 - stage.top;
+    const dx = x2 - x1, dy = y2 - y1;
+    const beam = document.createElement('div');
+    beam.className = `fx-beam type-${String(type || 'Normal').toLowerCase()}${big ? ' fx-beam-big' : ''}`;
+    beam.style.left = `${x1}px`;
+    beam.style.top = `${y1}px`;
+    beam.style.width = `${Math.hypot(dx, dy)}px`;
+    beam.style.transform = `rotate(${Math.atan2(dy, dx) * 180 / Math.PI}deg)`;
+    arena.appendChild(beam);
+    setTimeout(() => beam.remove(), big ? 900 : 680);
+  }
+  /* ---------- 招式特效：按属性生成不同的弹道/命中表现（自研粒子） ---------- */
+  const TYPE_FX = {
+    Fire: { travel: 'flame', shape: '', colors: ['#fff3a6', '#fb923c', '#dc2626'] },
+    Water: { travel: 'stream', shape: 'bubble', colors: ['#e0f2fe', '#0ea5e9', '#1d4ed8'] },
+    Electric: { travel: 'bolt', shape: 'star', colors: ['#fef9c3', '#facc15', '#f59e0b'] },
+    Grass: { travel: 'proj', shape: 'leaf', colors: ['#dcfce7', '#4ade80', '#15803d'] },
+    Ice: { travel: 'proj', shape: 'shard', colors: ['#ffffff', '#22d3ee', '#0369a1'] },
+    Fighting: { travel: 'burst', shape: 'star', colors: ['#ffedd5', '#fb923c', '#c2410c'] },
+    Poison: { travel: 'proj', shape: 'bubble', colors: ['#f3e8ff', '#c084fc', '#7e22ce'] },
+    Ground: { travel: 'rain', shape: 'rock', colors: ['#fef3c7', '#d97706', '#92400e'] },
+    Flying: { travel: 'slash', shape: 'feather', colors: ['#ffffff', '#c7d2fe', '#6366f1'] },
+    Psychic: { travel: 'wave', shape: '', colors: ['#fce7f3', '#f472b6', '#a21caf'] },
+    Bug: { travel: 'proj', shape: '', colors: ['#fef9c3', '#a3e635', '#4d7c0f'] },
+    Rock: { travel: 'rain', shape: 'rock', colors: ['#f5f5f4', '#a8a29e', '#44403c'] },
+    Ghost: { travel: 'proj', shape: 'wisp', colors: ['#ede9fe', '#8b5cf6', '#4c1d95'] },
+    Dragon: { travel: 'beam', shape: '', colors: ['#ede9fe', '#818cf8', '#6d28d9'] },
+    Dark: { travel: 'slash', shape: 'shard', colors: ['#c4b5fd', '#6d28d9', '#171321'] },
+    Steel: { travel: 'proj', shape: 'shard', colors: ['#ffffff', '#cbd5e1', '#475569'] },
+    Fairy: { travel: 'proj', shape: 'star', colors: ['#fdf2f8', '#f9a8d4', '#db2777'] },
+    Normal: { travel: 'proj', shape: '', colors: ['#ffffff', '#e5e7eb', '#6b7280'] },
+    Stellar: { travel: 'proj', shape: 'star', colors: ['#fef08a', '#f472b6', '#0284c7'] },
+  };
+  const fxRand = (a, b) => a + Math.random() * (b - a);
+  function arenaPoint(side) {
+    const arena = document.querySelector('.arena');
+    const el = spriteEl(side);
+    if (!arena || !el) return null;
+    const stage = arena.getBoundingClientRect(), r = el.getBoundingClientRect();
+    return { arena, x: r.left + r.width / 2 - stage.left, y: r.top + r.height / 2 - stage.top, w: arena.clientWidth, h: arena.clientHeight };
+  }
+  function spawnP(arena, x, y, o) {
+    const p = document.createElement('span');
+    p.className = 'fx-p' + (o.shape ? ' ' + o.shape : '');
+    p.setAttribute('aria-hidden', 'true');
+    const size = o.size || 12;
+    p.style.left = `${x}px`; p.style.top = `${y}px`;
+    p.style.width = `${size}px`; p.style.height = `${size}px`;
+    p.style.background = `radial-gradient(circle at 38% 32%, ${o.colors[0]}, ${o.colors[1]} 55%, ${o.colors[2]})`;
+    p.style.setProperty('--dx', `${o.dx || 0}px`);
+    p.style.setProperty('--dy', `${o.dy || 0}px`);
+    p.style.setProperty('--s', String(o.s || 1));
+    p.style.setProperty('--rot', `${o.rot ?? fxRand(-70, 70)}deg`);
+    p.style.setProperty('--dur', `${o.dur || 0.55}s`);
+    if (o.delay) p.style.animationDelay = `${o.delay}ms`;
+    arena.appendChild(p);
+    setTimeout(() => p.remove(), (o.dur || 0.55) * 1000 + (o.delay || 0) + 120);
+  }
+  function burstAt(arena, x, y, cfg, big = false, n = 10) {
+    const count = Math.round(n * (big ? 1.6 : 1));
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2 + fxRand(-0.3, 0.3);
+      const dist = fxRand(38, 92) * (big ? 1.35 : 1);
+      spawnP(arena, x, y, { shape: cfg.shape, colors: cfg.colors, size: fxRand(8, 17) * (big ? 1.3 : 1), dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist - 8, dur: fxRand(0.42, 0.62), s: fxRand(0.7, 1.15) });
+    }
+  }
+  function playMoveFx(fromSide, move, opts = {}) {
+    if (!move) return;
+    const big = !!opts.big;
+    const cfg = TYPE_FX[move.type] || TYPE_FX.Normal;
+    const targetSelf = /self|ally|field/.test(move.target || '') || move.target === 'all';
+    const foeSide = fromSide === 0 ? 1 : 0;
+    const from = arenaPoint(fromSide), to = arenaPoint(targetSelf ? fromSide : foeSide);
+    if (!from || !to) return;
+    const arena = from.arena;
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const burstLater = ms => setTimeout(() => burstAt(arena, to.x, to.y, cfg, big), ms);
+    if (move.category === 'Status') {
+      const host = spriteEl(targetSelf ? fromSide : foeSide);
+      if (host) {
+        const ring = document.createElement('div');
+        ring.className = 'fx fx-status-aura';
+        ring.style.setProperty('--sc', cfg.colors[1]);
+        ring.setAttribute('aria-hidden', 'true');
+        host.appendChild(ring);
+        setTimeout(() => ring.remove(), 950);
+      }
+      for (let i = 0; i < 6; i++) spawnP(arena, to.x + fxRand(-46, 46), to.y + fxRand(6, 42), { shape: cfg.shape, colors: cfg.colors, size: fxRand(7, 12), dx: fxRand(-8, 8), dy: fxRand(-72, -40), dur: fxRand(0.6, 0.85), delay: i * 60 });
+      return;
+    }
+    if (move.category === 'Physical') { burstAt(arena, to.x, to.y, cfg, big, 12); return; }
+    switch (cfg.travel) {
+      case 'flame': {
+        const n = big ? 22 : 15;
+        for (let i = 0; i < n; i++) {
+          const t = 0.25 + 0.75 * (i / n) + fxRand(-0.05, 0.05);
+          spawnP(arena, from.x, from.y - 6, { shape: 'flame', colors: cfg.colors, size: fxRand(19, 36) * (big ? 1.35 : 1), dx: dx * t + fxRand(-14, 14), dy: dy * t + fxRand(-20, 4), dur: fxRand(0.34, 0.5), delay: i * 21, s: fxRand(0.8, 1.25) });
+        }
+        burstLater(big ? 420 : 330);
+        break;
+      }
+      case 'bolt': {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'fx-bolt');
+        svg.setAttribute('viewBox', `0 0 ${from.w} ${from.h}`);
+        const jag = jit => { const pts = []; const seg = 7; for (let i = 0; i <= seg; i++) { const t = i / seg; pts.push(`${(from.x + dx * t + (i && i < seg ? fxRand(-jit, jit) : 0)).toFixed(1)},${(from.y + dy * t + (i && i < seg ? fxRand(-jit, jit) : 0)).toFixed(1)}`); } return pts.join(' '); };
+        svg.innerHTML = `<polyline points="${jag(15)}" fill="none" stroke="#facc15" stroke-width="${big ? 7 : 5}" stroke-linejoin="round" opacity="0.85"/><polyline points="${jag(15)}" fill="none" stroke="#fffbe6" stroke-width="2.2" stroke-linejoin="round"/>`;
+        arena.appendChild(svg);
+        setTimeout(() => svg.remove(), 560);
+        burstLater(210);
+        break;
+      }
+      case 'rain': {
+        const n = big ? 13 : 9;
+        for (let i = 0; i < n; i++) spawnP(arena, to.x + fxRand(-58, 58), to.y - fxRand(105, 150), { shape: 'rock', colors: cfg.colors, size: fxRand(11, 20) * (big ? 1.3 : 1), dx: fxRand(-8, 8), dy: fxRand(130, 165), dur: fxRand(0.4, 0.55), delay: i * 36, rot: fxRand(90, 260) });
+        burstLater(430);
+        break;
+      }
+      case 'slash': {
+        for (let i = 0; i < (big ? 4 : 3); i++) {
+          const sEl = document.createElement('div');
+          sEl.className = 'fx-slash';
+          sEl.setAttribute('aria-hidden', 'true');
+          sEl.style.left = `${to.x - 58}px`; sEl.style.top = `${to.y + (i - 1) * 22}px`;
+          sEl.style.setProperty('--sc', cfg.colors[1]);
+          sEl.style.setProperty('--r', `${[-26, 10, -42, 20][i]}deg`);
+          sEl.style.animationDelay = `${i * 95}ms`;
+          arena.appendChild(sEl);
+          setTimeout(() => sEl.remove(), 800);
+        }
+        burstLater(300);
+        break;
+      }
+      case 'wave': {
+        for (let i = 0; i < 3; i++) {
+          const ringEl = document.createElement('div');
+          ringEl.className = 'fx-wave-ring';
+          ringEl.setAttribute('aria-hidden', 'true');
+          ringEl.style.left = `${to.x}px`; ringEl.style.top = `${to.y}px`;
+          ringEl.style.setProperty('--sc', cfg.colors[1]);
+          ringEl.style.animationDelay = `${i * 100}ms`;
+          arena.appendChild(ringEl);
+          setTimeout(() => ringEl.remove(), 950);
+        }
+        for (let i = 0; i < 5; i++) { const ox = fxRand(-85, 85), oy = fxRand(-60, 60); spawnP(arena, to.x + ox, to.y + oy, { colors: cfg.colors, size: fxRand(9, 14), dx: -ox * 0.85, dy: -oy * 0.85, dur: 0.5, delay: i * 45 }); }
+        burstLater(380);
+        break;
+      }
+      case 'beam': {
+        showBeam(fromSide, move.type, big);
+        const n = big ? 10 : 7;
+        for (let i = 0; i < n; i++) spawnP(arena, from.x, from.y, { colors: cfg.colors, size: fxRand(9, 15) * (big ? 1.3 : 1), dx: dx * fxRand(0.55, 1), dy: dy * fxRand(0.55, 1) + fxRand(-12, 12), dur: fxRand(0.4, 0.55), delay: i * 30 });
+        burstLater(330);
+        break;
+      }
+      default: {
+        const n = big ? 14 : 11;
+        for (let i = 0; i < n; i++) spawnP(arena, from.x, from.y, { shape: cfg.shape, colors: cfg.colors, size: (cfg.shape === 'shard' ? fxRand(16, 27) : cfg.shape === 'bubble' ? fxRand(12, 20) : fxRand(10, 18)) * (big ? 1.35 : 1), dx: dx + fxRand(-16, 16), dy: dy + fxRand(-34, 6), dur: fxRand(0.48, 0.66), delay: i * 22 });
+        burstLater(360);
+      }
+    }
+    if (big) setTimeout(() => burstAt(arena, to.x, to.y, TYPE_FX.Stellar, true, 8), 430);
+  }
+  function castImg(side, type) {
+    const img = spriteEl(side)?.querySelector('img');
+    if (!img) return;
+    img.style.setProperty('--mech', FX_TYPE_COLORS[type] || '#facc15');
+    addClassTemp(img, 'fx-cast', 540);
+  }
+  // 退场：精灵闪烁着沉降消失（参考角色卡的节奏，自研实现），随后保持隐藏直到被换下
+  function playRecall(side) {
+    const img = spriteEl(side)?.querySelector('img');
+    if (!img) return;
+    img.classList.remove('fx-gone', 'fx-blip');
+    void img.offsetWidth;
+    img.classList.add('fx-blip');
+    setTimeout(() => { img.classList.remove('fx-blip'); img.classList.add('fx-gone'); }, 730);
+  }
+  // 登场：我方自下而上弹簧升起、敌方自上而下坠落站稳（参考角色卡的节奏，自研实现）
+  function playSendOut(side) {
+    const img = spriteEl(side)?.querySelector('img');
+    if (!img) return;
+    const cls = side === 0 ? 'fx-enter-rise' : 'fx-enter-drop';
+    img.classList.remove('fx-gone', 'fx-enter-rise', 'fx-enter-drop');
+    void img.offsetWidth;
+    img.classList.add(cls);
+    setTimeout(() => img.classList.remove(cls), side === 0 ? 600 : 700);
+  }
+  function playTurnAnimations(before, chosen, logStart) {
+    if (!before || !battle) return;
+    const afterSnap = snapshotBattle();
+    if (!afterSnap) return;
+    const logs = battle.log.slice(logStart || 0);
+    const beforeActive = side => before.teams[side]?.[before.active[side]];
+    const afterActive = side => afterSnap.teams[side]?.[afterSnap.active[side]];
+    let delay = 40;
+    // 变身處理：先在第一幀繪製前把精靈切回舊形態剪影，避免新形態先閃現出來
+    const transforms = {};
+    for (const side of [0, 1]) {
+      const afterIdx = afterSnap.active[side];
+      const b = before.teams[side]?.[afterIdx], a = afterSnap.teams[side]?.[afterIdx];
+      if (!b || !a) continue;
+      let kind = null;
+      if (a.isMega && !b.isMega) kind = 'mega';
+      else if (a.dynamaxed && !b.dynamaxed) kind = 'dynamax';
+      else if (a.terastallized && !b.terastallized) kind = 'tera';
+      if (!kind) {
+        if (!a.dynamaxed && b.dynamaxed) setTimeout(() => animateImg(side, 'fx-shrink', 700), delay);
+        continue;
+      }
+      if (side === 0 && chosen?.preAnimated) continue;
+      transforms[side] = { kind, b, a };
+      const box = spriteEl(side), img = box?.querySelector('img');
+      if (!img) continue;
+      if (kind === 'mega' || (kind === 'dynamax' && normId(b.speciesId) !== normId(a.speciesId))) {
+        transforms[side].newUrl = img.currentSrc || img.src;
+        const oldUrl = spriteUrlForSnapshot(b, side);
+        if (oldUrl && oldUrl !== transforms[side].newUrl) swapSpriteSrc(img, oldUrl);
+        $(side === 0 ? 'p-name' : 'e-name').textContent = b.nameText || b.name;
+      }
+      if (kind === 'mega') img.classList.add('evo-silhouette');
+      if (kind === 'tera') img.style.setProperty('--mech', FX_TYPE_COLORS[a.teraType] || '#67e8f9');
+    }
+    for (const side of [0, 1]) {
+      const t = transforms[side];
+      if (t) {
+        const at = delay, prefix = side === 0 ? 'p' : 'e';
+        if (t.kind === 'mega') { setTimeout(() => runTransformPhases(side, 'mega', { newUrl: t.newUrl, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 1500; }
+        else if (t.kind === 'dynamax') { setTimeout(() => runTransformPhases(side, 'dynamax', { gmax: t.a.dynamaxForm === 'gmax', newUrl: t.newUrl, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 980; }
+        else if (t.kind === 'tera') { setTimeout(() => runTransformPhases(side, 'tera', { teraType: t.a.teraType }), at); delay += 980; }
+      }
+      if (before.active[side] !== afterSnap.active[side]) {
+        const at = delay + 60;
+        // 被击败后自动换上的：先把倒下的旧精灵切回来播回收，再送出新精灵
+        const oldMon = afterSnap.teams[side]?.[before.active[side]]; // 回合后同一只的状态（是否刚被击败）
+        const img0 = spriteEl(side)?.querySelector('img');
+        if (oldMon?.fainted && chosen?.kind !== 'switch' && img0) {
+          const newUrl = img0.currentSrc || img0.src;
+          const oldUrl = spriteUrlForSnapshot(oldMon, side);
+          if (oldUrl && oldUrl !== newUrl) {
+            swapSpriteSrc(img0, oldUrl);
+            setTimeout(() => playRecall(side), at + 240);
+            setTimeout(() => { swapSpriteSrc(img0, newUrl); playSendOut(side); }, at + 1000);
+          } else setTimeout(() => playSendOut(side), at);
+        } else setTimeout(() => playSendOut(side), at);
+      }
+    }
+
+    const foeBefore = beforeActive(1), foeAfter = afterActive(1);
+    const meBefore = beforeActive(0), meAfter = afterActive(0);
+    const foeDamaged = !!(foeBefore && foeAfter && before.active[1] === afterSnap.active[1] && foeAfter.hp < foeBefore.hp);
+    const meDamaged = !!(meBefore && meAfter && before.active[0] === afterSnap.active[0] && meAfter.hp < meBefore.hp);
+    if (chosen?.kind === 'move') {
+      const at = delay + 70;
+      const isZ = chosen.mechanic === 'z';
+      setTimeout(() => {
+        if (isZ) {
+          playMechanicCharge(0, chosen.type);
+          setTimeout(() => {
+            playMoveFx(0, chosen, { big: true });
+            if (foeDamaged) setTimeout(() => { animateImg(1, 'fx-hit', 720); addFx(1, 'fx-impact', '', 650); }, 340);
+          }, 980);
+        } else {
+          if (chosen.category === 'Physical') animateImg(0, 'fx-attack', 680);
+          else castImg(0, chosen.type);
+          playMoveFx(0, chosen);
+          if (foeDamaged) setTimeout(() => { animateImg(1, 'fx-hit', 720); addFx(1, 'fx-impact', '', 650); }, 330);
+        }
+      }, at);
+      delay = at + (isZ ? 1500 : 470);
+    } else if (chosen?.kind === 'switch') {
+      delay += 180;
+    }
+
+    const foeRaw = foeBefore?.rawName || '';
+    const enemyUsedMove = foeRaw && logs.some(line => line.includes(`${foeRaw} 使用了`));
+    if (enemyUsedMove && afterSnap.winner === null) {
+      const enemyLine = logs.find(line => line.includes(`${foeRaw} 使用了`)) || '';
+      const enemyMoveName = /使用了\s+([^!！。]+)/.exec(enemyLine)?.[1]?.trim();
+      const enemyMove = enemyMoveName ? Object.values(PKMBattle._moves || {}).find(move => move.name === enemyMoveName) : null;
+      const at = delay + 120;
+      setTimeout(() => {
+        const mv = enemyMove || { type: 'Normal', category: 'Physical', target: 'normal' };
+        if (mv.category === 'Physical') animateImg(1, 'fx-attack', 680);
+        else castImg(1, mv.type);
+        playMoveFx(1, mv);
+        if (meDamaged) setTimeout(() => { animateImg(0, 'fx-hit', 720); addFx(0, 'fx-impact', '', 650); }, 330);
+      }, at);
+      delay = at + 360;
+    }
+
+    setTimeout(() => {
+      for (const side of [0, 1]) {
+        const b = beforeActive(side), a = afterActive(side);
+        if (!b || !a || before.active[side] !== afterSnap.active[side]) continue;
+        if (a.fainted && !b.fainted) playRecall(side);
+        else if (a.hp > b.hp) { animateImg(side, 'fx-heal', 900); addFx(side, 'fx-heal-plus', '＋', 900); }
+        else if (a.hp < b.hp && !((side === 1 && foeDamaged) || (side === 0 && meDamaged))) animateImg(side, 'fx-hit', 650);
+        if (a.status && a.status !== b.status) addFx(side, 'fx-status', PKMBattle.STATUS_NAMES[a.status] || '异常', 1200);
+      }
+    }, delay + 260);
+  }
 
   function render() {
     if (!battle) return;
     const me = battle.cur(0), foe = battle.cur(1);
     const fill = (p, prefix) => {
-      $(prefix + '-name').textContent = p.name + (p.status ? `（${PKMBattle.STATUS_NAMES[p.status] || p.status}）` : '');
+      $(prefix + '-name').textContent = displayPokemonName(p) + (p.status ? `（${PKMBattle.STATUS_NAMES[p.status] || p.status}）` : '');
       const ab = PKMMechanics.abilityInfo(p.ability);
       const it = p.item ? PKMMechanics.itemInfo(p.item) : null;
       const badges = [];
-      if (p.isMega) badges.push('Mega');
-      if (p.terastallized) badges.push(`太晶·${p.teraType}`);
+      if (p.isMega) badges.push('超级进化');
+      if (p.terastallized) badges.push(`太晶·${zhType(p.teraType)}`);
       if (p.dynamaxed) badges.push(`${p.dynamaxForm === 'gmax' ? '超极巨' : '极巨'}·${p.dynamaxTurns}回合`);
-      $(prefix + '-sub').textContent = `Lv.${p.level} · ${p.types.join('/')} · ${p.speciesName} · 特性 ${ab?.name || p.ability || '无'}${it ? ' · ' + it.name : ''}${badges.length ? ' · ' + badges.join(' · ') : ''}${p.choiceLockedMove ? ' · 讲究锁定中' : ''}`;
+      const speciesText = p.hasNickname ? ` · ${zhSpecies(p.speciesId, p.speciesName)}` : '';
+      $(prefix + '-sub').textContent = `等级 ${p.level} · ${p.types.map(zhType).join('/')} · 特性 ${ab?.name || zhAbility(p.ability)}${speciesText}${badges.length ? ' · ' + badges.join(' · ') : ''}${p.choiceLockedMove ? ' · 锁定中' : ''}`;
+      $(prefix + '-sub').title = `等级 ${p.level} · ${p.types.map(zhType).join('/')} · ${zhSpecies(p.speciesId, p.speciesName)} · 特性 ${ab?.name || zhAbility(p.ability)}${it ? ' · 道具 ' + displayItemName(it) : ''}`;
       const ratio = p.hp / p.maxHp;
       const bar = $(prefix + '-hp');
       bar.style.width = (ratio * 100).toFixed(1) + '%';
       bar.className = hpClass(ratio);
-      $(prefix + '-hptext').textContent = `HP ${p.hp} / ${p.maxHp}`;
+      $(prefix + '-hptext').textContent = `体力 ${p.hp} / ${p.maxHp}`;
     };
     fill(me, 'p'); fill(foe, 'e');
     setSprite($('p-sprite'), me, true);
@@ -43,7 +688,9 @@
       battle.teams[side].forEach((p, i) => {
         const s = document.createElement('span');
         s.className = 'pip' + (i === battle.active[side] ? ' active' : '') + (p.fainted ? ' fainted' : '');
-        s.textContent = `${p.name} ${p.hp}/${p.maxHp}`;
+        s.textContent = '';
+        s.title = `${displayPokemonName(p)}，体力 ${p.hp}/${p.maxHp}`;
+        s.setAttribute('aria-label', s.title);
         el.appendChild(s);
       });
     };
@@ -62,22 +709,24 @@
       if (a.length) fieldParts.push(label + '：' + a.join('、'));
     };
     sideText(battle.field.sides[0], '我方'); sideText(battle.field.sides[1], '敌方');
-    $('field-state').textContent = '场地：' + (fieldParts.length ? fieldParts.join(' · ') : '无特殊效果');
+    $('field-state').textContent = '战场：' + (fieldParts.length ? fieldParts.join(' · ') : '无特殊效果');
 
     const log = $('log');
-    log.textContent = battle.log.join('\n');
+    log.textContent = battle.log.map(translateText).join('\n');
     log.scrollTop = log.scrollHeight;
 
+    const over = battle.winner !== null;
     if (battle.pendingSwitch !== null) selectedMechanic = null;
     const mechRoot = $('mechanics');
     mechRoot.innerHTML = '';
-    const mechanicLabels = { mega: '✨ Mega 进化', z: '💥 Z 招式', dynamax: '🔴 极巨化', tera: '💎 太晶化' };
+    const mechanicLabels = { mega: '✨ 超级进化', z: '💥 Ｚ招式', dynamax: '🔴 极巨化', tera: '💎 太晶化' };
     if (me.mechanic && !battle.mechanicUsed[0][me.mechanic] && !(me.mechanic === 'mega' && me.isMega) && !(me.mechanic === 'dynamax' && me.dynamaxed) && !(me.mechanic === 'tera' && me.terastallized)) {
       const b = document.createElement('button');
       b.type = 'button';
+      b.className = 'mechanic-btn' + (selectedMechanic === me.mechanic ? ' active' : '');
       const zReady = me.mechanic !== 'z' || me.moves.some(m => m.type === me.zType);
       b.disabled = over || battle.pendingSwitch !== null || !zReady;
-      b.textContent = (selectedMechanic === me.mechanic ? '✓ ' : '') + mechanicLabels[me.mechanic] + (me.mechanic === 'z' ? `（${me.zType}）` : me.mechanic === 'tera' ? `（${me.teraType}）` : '');
+      b.textContent = (selectedMechanic === me.mechanic ? '已选 · ' : '') + mechanicLabels[me.mechanic] + (me.mechanic === 'z' ? `（${zhType(me.zType)}）` : me.mechanic === 'tera' ? `（${zhType(me.teraType)}）` : '');
       b.title = '点击后，再选择本回合招式；再次点击可取消';
       b.onclick = () => { selectedMechanic = selectedMechanic === me.mechanic ? null : me.mechanic; render(); };
       mechRoot.appendChild(b);
@@ -85,13 +734,13 @@
 
     const moves = $('moves');
     moves.innerHTML = '';
-    const over = battle.winner !== null;
     me.moves.forEach((m, i) => {
       const shown = PKMBattle.transformMove(me, m, selectedMechanic);
       const b = document.createElement('button');
       b.type = 'button';
+      b.className = `move-btn type-${String(shown.type || '').toLowerCase()}`;
       b.disabled = over || battle.pendingSwitch !== null || m.ppLeft <= 0 || (me.choiceLockedMove && me.choiceLockedMove !== m.id) || me.volatile.disableMove === m.id || (selectedMechanic === 'z' && m.type !== me.zType);
-      b.innerHTML = `${shown.name}<small>${shown.type} · ${shown.category}${shown.basePower ? ' · 威力 ' + shown.basePower : ''} · PP ${m.ppLeft}/${m.pp}</small>`;
+      b.innerHTML = `${displayMoveName(shown, m)}<small>${zhType(shown.type)} · ${zhCat(shown.category)}${shown.basePower ? ' · 威力 ' + shown.basePower : ''} · 招式点数 ${m.ppLeft}/${m.pp}</small>`;
       b.onclick = () => act({ kind: 'move', index: i, mechanic: selectedMechanic });
       moves.appendChild(b);
     });
@@ -101,10 +750,15 @@
       if (i === battle.active[0] || p.fainted) return;
       const b = document.createElement('button');
       b.type = 'button';
-      b.textContent = `换 ${p.name}（HP ${p.hp}/${p.maxHp}）`;
+      b.className = 'switch-btn';
+      b.textContent = displayPokemonName(p);
+      b.title = `换上${displayPokemonName(p)}，体力 ${p.hp}/${p.maxHp}`;
       b.disabled = over;
       b.onclick = () => {
-        if (battle.pendingSwitch !== null) { if (battle.forceSwitch(i)) after(); }
+        if (battle.pendingSwitch !== null) {
+          const before = snapshotBattle(), logStart = battle.log.length;
+          if (battle.forceSwitch(i)) { after(); requestAnimationFrame(() => playTurnAnimations(before, { kind: 'switch' }, logStart)); }
+        }
         else act({ kind: 'switch', index: i });
       };
       sw.appendChild(b);
@@ -126,7 +780,51 @@
     try { window.top?.postMessage({ type: 'PKM_BATTLE_RESULT', payload }, '*'); } catch (_) {}
   }
   function after() { render(); announceResult(); }
-  function act(a) { if (!battle) return; battle.turn(a); selectedMechanic = null; after(); }
+  function act(a) {
+    if (!battle || animating) return;
+    const battleRef = battle;
+    const before = snapshotBattle();
+    const logStart = battle.log.length;
+    let chosen = { kind: a.kind };
+    let mech = null;
+    if (a.kind === 'move') {
+      const me = battle.cur(0), base = me?.moves[a.index];
+      mech = a.mechanic || selectedMechanic;
+      if (base) {
+        const shown = PKMBattle.transformMove(me, base, mech);
+        chosen = { kind: 'move', mechanic: mech, type: shown.type, category: shown.category, target: shown.target || base.target || 'normal', name: displayMoveName(shown, base) };
+      }
+    }
+    const finishTurn = () => {
+      if (battle !== battleRef) return;
+      battle.turn(a);
+      selectedMechanic = null;
+      after();
+      requestAnimationFrame(() => playTurnAnimations(before, chosen, logStart));
+    };
+    // 玩家变身：先在当前精灵上播完变身动画，再结算回合（顺序与参考卡一致）
+    const meP = battle.cur(0);
+    const willTransform = a.kind === 'move' && mech && mech !== 'z' && meP && meP.mechanic === mech
+      && !battle.mechanicUsed[0][mech]
+      && !(mech === 'mega' && meP.isMega) && !(mech === 'dynamax' && meP.dynamaxed) && !(mech === 'tera' && meP.terastallized);
+    if (willTransform) {
+      chosen.preAnimated = true;
+      animating = true;
+      const newSpeciesId = mech === 'mega' ? meP.megaForm
+        : (mech === 'dynamax' && meP.dynamaxForm === 'gmax' ? `${meP.originalSpeciesId}gmax` : null);
+      const newUrl = newSpeciesId
+        ? spriteUrlForSnapshot({ speciesId: newSpeciesId, originalSpeciesId: meP.originalSpeciesId, rawName: PKMBattle._dex?.[normId(newSpeciesId)]?.name || newSpeciesId }, 0)
+        : '';
+      runTransformPhases(0, mech, { newUrl, gmax: meP.dynamaxForm === 'gmax', teraType: meP.teraType })
+        .catch(() => {})
+        .finally(() => { animating = false; finishTurn(); });
+    } else if (a.kind === 'switch' && meP && !meP.fainted && battle.pendingSwitch === null) {
+      // 主动换人：先把当前宝可梦收回精灵球，再执行换人
+      animating = true;
+      playRecall(0);
+      setTimeout(() => { animating = false; finishTurn(); }, 700);
+    } else finishTurn();
+  }
 
   function buildFromPreset(trainer) {
     return trainer.party.map(p => PKMBattle.createPokemon(p.species, p.level, p.moves, p));
@@ -147,6 +845,7 @@
 
   function startBattle(cfg) {
     selectedMechanic = null;
+    animating = false;
     let playerTeam, enemyTeam, difficulty = $('sel-diff').value, weather = null;
     if (cfg) {
       difficulty = cfg.difficulty || difficulty;
@@ -180,6 +879,7 @@
       battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty });
     }
     after();
+    requestAnimationFrame(() => { playSendOut(1); setTimeout(() => playSendOut(0), 150); });
   }
 
 
@@ -187,9 +887,11 @@
   const NATURES = ['', 'adamant', 'modest', 'jolly', 'timid', 'bold', 'calm', 'impish', 'careful', 'brave', 'quiet', 'relaxed', 'sassy', 'lonely', 'mild', 'hasty', 'naive', 'naughty', 'rash', 'lax', 'gentle'];
   const LS_KEY = 'pkm-custom-teams-v2';
   function resolveSpeciesId(text) {
-    const n = normId(text);
+    const raw = String(text || '').trim();
+    const n = normId(raw);
     if (PKMBattle._dex[n]) return n;
     for (const [id, sp] of Object.entries(PKMBattle._dex)) if (normId(sp.name) === n) return id;
+    if (speciesZhToId[raw]) return speciesZhToId[raw];
     return n;
   }
   function editorRoot(side) { return side === 'player' ? $('editor-player') : $('editor-enemy'); }
@@ -215,9 +917,9 @@
     const add = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; detail.appendChild(o); };
     if (kind === 'mega') {
       const forms = PKMTeam.megaForms(sid);
-      if (!forms.length) add('', '（该物种无 Mega 形态）'); else forms.forEach(f => add(f.id, f.name));
-    } else if (kind === 'z') PKMMechanics.TYPES.forEach(t => add(t, `${PKMMechanics.TYPE_ZH[t]}Z（${t}）`));
-    else if (kind === 'tera') PKMMechanics.TYPES.forEach(t => add(t, `太晶·${PKMMechanics.TYPE_ZH[t]}（${t}）`));
+      if (!forms.length) add('', '（该宝可梦无超级形态）'); else forms.forEach(f => add(f.id, zhSpecies(f.id, f.name)));
+    } else if (kind === 'z') PKMMechanics.TYPES.forEach(t => add(t, `${PKMMechanics.TYPE_ZH[t]}Ｚ纯晶`));
+    else if (kind === 'tera') PKMMechanics.TYPES.forEach(t => add(t, `太晶·${PKMMechanics.TYPE_ZH[t]}`));
     else if (kind === 'dynamax') { add('', '普通极巨化'); if (PKMTeam.gmaxForm(sid)) add('gmax', '超极巨化'); }
     else add('', '无机制');
     detail.disabled = !kind;
@@ -232,7 +934,7 @@
     const abilitySel = row.querySelector('.f-ability');
     const prevAbility = abilitySel.value || abilitySel.dataset.want || '';
     abilitySel.innerHTML = '';
-    (dex?.abilities || []).forEach(a => { const o = document.createElement('option'); o.value = a; o.textContent = a; abilitySel.appendChild(o); });
+    (dex?.abilities || []).forEach(a => { const o = document.createElement('option'); o.value = a; o.textContent = zhAbility(a); abilitySel.appendChild(o); });
     if (prevAbility && dex?.abilities?.includes(prevAbility)) abilitySel.value = prevAbility;
     const legal = dex ? PKMTeam.legalMoves(sid, level) : [];
     row.querySelectorAll('.f-move').forEach(sel => {
@@ -242,24 +944,24 @@
       for (const m of legal) {
         const o = document.createElement('option');
         o.value = m.id;
-        o.textContent = `${m.name} · ${m.type}/${m.category}${m.basePower ? ' ' + m.basePower : ''}（${m.learn.viaLabel}）`;
+        o.textContent = `${zhMove(m.id, m.name)} · ${zhType(m.type)}/${zhCat(m.category)}${m.basePower ? ' 威力' + m.basePower : ''}（${m.learn.viaLabel.replaceAll('+', '、')}）`;
         sel.appendChild(o);
       }
       if (prev) {
         if (![...sel.options].some(o => o.value === prev)) {
-          const o = document.createElement('option'); o.value = prev; o.textContent = (PKMBattle._moves[prev]?.name || prev) + '（当前等级未学会/不合法）'; sel.appendChild(o);
+          const o = document.createElement('option'); o.value = prev; o.textContent = zhMove(prev, '未知招式') + '（当前等级未学会或不合法）'; sel.appendChild(o);
         }
         sel.value = prev;
       }
     });
     const mechanicDetail = refreshMechanicOptions(row);
     const abInfo = PKMMechanics.abilityInfo(abilitySel.value);
-    abilitySel.title = abInfo ? `${abInfo.name}：${abInfo.desc}` : '该特性效果将在后续阶段实现';
+    abilitySel.title = abInfo ? translateText(`${abInfo.name}：${abInfo.desc}`) : '该特性效果尚未实现';
     const itemSel = row.querySelector('.f-item');
-    if (itemSel) itemSel.title = PKMMechanics.itemInfo(itemSel.value).desc;
+    if (itemSel) itemSel.title = translateText(PKMMechanics.itemInfo(itemSel.value).desc);
     row.querySelector('.f-note').textContent = dex
-      ? (PKMTeam.hasLearnset(sid) ? `${dex.name} · ${dex.types.join('/')} · 合法招式 ${legal.length} 个 · ${abInfo ? '特性已生效' : '特性效果待实现'}` : `${dex.name} · 数据集暂无现行学习面（未校验）`)
-      : '物种不存在';
+      ? (PKMTeam.hasLearnset(sid) ? `${zhSpecies(sid, dex.name)} · ${dex.types.map(zhType).join('/')} · 合法招式 ${legal.length} 个 · ${abInfo ? '特性已生效' : '特性效果尚未实现'}` : `${zhSpecies(sid, dex.name)} · 暂无第九代学习面（未校验）`)
+      : '宝可梦不存在';
   }
   function renderEditor(side, specs) {
     const rootEl = editorRoot(side);
@@ -267,25 +969,24 @@
     specs.slice(0, 6).forEach((spec, i) => {
       const row = document.createElement('fieldset');
       row.className = 'team-row';
-      row.style.cssText = 'border:2px solid #222;border-radius:10px;margin:0 0 8px;padding:8px;background:#fff';
-      row.innerHTML = `<legend style="font-weight:700">#${i + 1}</legend>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <input class="f-species" list="species-list" placeholder="物种（如 pikachu）" style="width:150px">
-          <input class="f-level" type="number" min="1" max="100" style="width:72px" title="等级">
-          <select class="f-nature" title="性格">${NATURES.map(n => `<option value="${n}">${n || '性格：无修正'}</option>`).join('')}</select>
+      row.innerHTML = `<legend>#${i + 1}</legend>
+        <div class="row-main">
+          <input class="f-species" list="species-list" placeholder="输入名称，如：皮卡丘">
+          <input class="f-level" type="number" min="1" max="100" title="等级">
+          <select class="f-nature" title="性格">${NATURES.map(n => `<option value="${n}">${n ? '性格：' + zhNature(n) : '性格：无修正'}</option>`).join('')}</select>
           <select class="f-ability" title="特性"></select>
           <select class="f-item" title="道具">${Object.values(PKMMechanics.ITEMS).map(i => `<option value="${i.id}">${i.name}</option>`).join('')}</select>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+        <div class="move-grid">
           ${[0, 1, 2, 3].map(() => `<select class="f-move"></select>`).join('')}
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-          <select class="f-mechanic" title="战斗机制"><option value="">机制：无</option><option value="mega">Mega 进化</option><option value="z">Z 招式</option><option value="dynamax">极巨化</option><option value="tera">太晶化</option></select>
+        <div class="mechanic-row">
+          <select class="f-mechanic" title="战斗机制"><option value="">机制：无</option><option value="mega">超级进化</option><option value="z">Ｚ招式</option><option value="dynamax">极巨化</option><option value="tera">太晶化</option></select>
           <select class="f-mechanic-detail" title="机制细节"></select>
         </div>
         <div class="f-note note"></div>`;
       rootEl.appendChild(row);
-      row.querySelector('.f-species').value = spec.species || '';
+      row.querySelector('.f-species').value = spec.species ? zhSpecies(resolveSpeciesId(spec.species), spec.species) : '';
       row.querySelector('.f-level').value = spec.level || 50;
       row.querySelector('.f-nature').value = spec.nature || '';
       row.querySelector('.f-ability').dataset.want = spec.ability || '';
@@ -324,7 +1025,7 @@
   function buildValidated(spec, label) {
     const v = PKMTeam.validateTeam(spec);
     showValidate((v.errors.length ? `${label}错误：\n` + v.errors.join('\n') : '') + (v.warnings.length ? `\n${label}提示：\n` + v.warnings.join('\n') : ''));
-    if (!v.ok) { alert(label + '队伍有问题：\n' + v.errors.join('\n')); return null; }
+    if (!v.ok) { alert(label + '队伍有问题：\n' + v.errors.map(translateText).join('\n')); return null; }
     return spec.map(p => PKMBattle.createPokemon(p.species, p.level, p.moves, p));
   }
   function showValidate(extra) {
@@ -334,7 +1035,7 @@
     lines.push(pv.ok ? '我方队伍：合法 ✓' : '我方队伍错误：\n' + pv.errors.join('\n'));
     lines.push(ev.ok ? '敌方队伍：合法 ✓' : '敌方队伍错误：\n' + ev.errors.join('\n'));
     for (const w of [...pv.warnings, ...ev.warnings]) lines.push('提示：' + w);
-    $('validate-msg').textContent = lines.join('\n');
+    $('validate-msg').textContent = lines.map(translateText).join('\n');
     $('validate-msg').style.whiteSpace = 'pre-wrap';
   }
   function randomSpec() {
@@ -361,16 +1062,30 @@
   }
 
   async function init() {
-    const [dex, moves, learnsets] = await Promise.all([
-      fetch('./src/data/pokedex.json').then(r => r.json()),
-      fetch('./src/data/moves.json').then(r => r.json()),
-      fetch('./src/data/learnsets.json').then(r => r.json()),
+    const [dex, moves, learnsets, zh, spriteMap] = await Promise.all([
+      fetch('./src/data/pokedex.json?v=0.8.3').then(r => r.json()),
+      fetch('./src/data/moves.json?v=0.8.3').then(r => r.json()),
+      fetch('./src/data/learnsets.json?v=0.8.3').then(r => r.json()),
+      fetch('./src/data/zh-names.json?v=0.8.3').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/sprite-map.json?v=0.8.3').then(r => r.ok ? r.json() : {}).catch(() => ({})),
     ]);
+    ZH = zh || {};
+    SPRITES = spriteMap?.entries || {};
+    SPRITE_FEET = {};
+    SPRITE_FEETX = {};
+    for (const e of Object.values(SPRITES)) {
+      if (e.front) { SPRITE_FEET[e.front] = e.frontFeet; SPRITE_FEETX[e.front] = e.frontFeetX; }
+      if (e.back) { SPRITE_FEET[e.back] = e.backFeet; SPRITE_FEETX[e.back] = e.backFeetX; }
+    }
     PKMBattle.setData(dex, moves);
     PKMTeam.setData(dex, moves, learnsets);
     PKMBattle._dex = dex; PKMBattle._moves = moves;
+    buildTextPairs();
     const dl = $('species-list');
-    Object.values(dex).sort((a, b) => a.num - b.num).forEach(sp => { const o = document.createElement('option'); o.value = sp.name; dl.appendChild(o); });
+    Object.entries(dex)
+      .filter(([id, sp]) => sp.num >= 1 && sp.num <= 1025 && (!sp.baseSpecies || normId(sp.baseSpecies) === id))
+      .sort((a, b) => a[1].num - b[1].num)
+      .forEach(([id, sp]) => { const o = document.createElement('option'); o.value = zhSpecies(id, sp.name); dl.appendChild(o); });
     const specs = loadEditorSpecs();
     renderEditor('player', specs.player);
     renderEditor('enemy', specs.enemy);
@@ -397,5 +1112,5 @@
     if (d.type === 'PKM_BATTLE_CONFIG' && d.payload) { try { startBattle(d.payload); } catch (e) { console.warn('[PKM] bad config', e); } }
   });
 
-  init().catch(e => { $('log').textContent = '数据加载失败：' + e.message + '\n（请通过 http 访问本页，不要直接双击文件）'; });
+  init().catch(e => { $('log').textContent = '数据加载失败：' + e.message + '\n（请通过网页服务打开本页，不要直接双击文件）'; });
 })();

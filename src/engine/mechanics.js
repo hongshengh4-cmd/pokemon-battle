@@ -57,10 +57,10 @@
     steadfast: ['不屈之心', '退缩时速度提升 1 级'],
     rockhead: ['坚硬脑袋', '不会受到反冲伤害'],
     hustle: ['活力', '物理招式威力与命中会变化（引擎已处理命中）'],
-    pressure: ['压迫感', '使对手招式的 PP 额外减少 1'],
+    pressure: ['压迫感', '使对手招式的招式点数额外减少 1'],
     cursedbody: ['诅咒之躯', '受到攻击时 30% 使攻击方招式陷入定身法（4 回合）'],
     shadowtag: ['踩影', '阻止对手交换宝可梦（幽灵系除外）'],
-    trace: ['追踪', '入场/Mega 后复制对手特性'],
+    trace: ['追踪', '入场或超级进化后复制对手特性'],
     thickfat: ['厚脂肪', '受到火/冰招式伤害减半'],
     heatproof: ['耐热', '受到火招式伤害减半、灼伤伤害减半'],
     filter: ['过滤', '受到效果绝佳招式伤害 ×0.75'],
@@ -155,7 +155,7 @@
     sitrusberry: ['文柚果', 'HP 不足一半时回复 1/4（一次性）'],
     oranberry: ['橙橙果', 'HP 不足一半时回复 10（一次性）'],
     lumberry: ['木子果', '治愈异常状态与混乱（一次性）'],
-    leppaberry: ['苹野果', '有招式 PP 耗尽时回复 10 PP（一次性）'],
+    leppaberry: ['苹野果', '有招式点数耗尽时回复 10 点（一次性）'],
     cheriberry: ['樱子果', '治愈麻痹（一次性）'],
     chestoberry: ['零余果', '治愈睡眠（一次性）'],
     pechaberry: ['桃桃果', '治愈中毒（一次性）'],
@@ -216,7 +216,7 @@
     Fighting: 'fightiniumz', Poison: 'poisoniumz', Ground: 'groundiumz', Flying: 'flyiniumz', Psychic: 'psychiumz', Bug: 'buginiumz',
     Rock: 'rockiumz', Ghost: 'ghostiumz', Dragon: 'dragoniumz', Dark: 'darkiniumz', Steel: 'steeliumz', Fairy: 'fairiumz',
   };
-  for (const type of TYPES) ITEMS[Z_CRYSTALS[type]] = [`${TYPE_ZH[type]}Z`, `Z 水晶：把同属性招式变为 Z 招式（每队每场 1 次）`];
+  for (const type of TYPES) ITEMS[Z_CRYSTALS[type]] = [`${TYPE_ZH[type]}Ｚ纯晶`, `Ｚ纯晶：把同属性招式变为Ｚ招式（每队每场 1 次）`];
   const MAX_MOVES = {
     Normal: ['maxstrike', '极巨攻击'], Fighting: ['maxknuckle', '极巨拳斗'], Flying: ['maxairstream', '极巨飞冲'], Poison: ['maxooze', '极巨酸毒'],
     Ground: ['maxquake', '极巨大地'], Rock: ['maxrockfall', '极巨岩石'], Bug: ['maxflutterby', '极巨虫蛊'], Ghost: ['maxphantasm', '极巨幽魂'],

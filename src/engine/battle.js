@@ -325,7 +325,7 @@
       this.pendingSwitch = null; // side index that must switch (player-facing)
       this.mechanicUsed = [{ mega: false, z: false, dynamax: false, tera: false }, { mega: false, z: false, dynamax: false, tera: false }];
       this.teams.forEach((team, side) => team.forEach(p => { p._battle = this; p._side = side; p._enteredThisTurn = false; }));
-      this.say(`战斗开始！${this.cur(1).name} VS ${this.cur(0).name}`);
+      this.say(`战斗开始！${this.cur(1).name} 对 ${this.cur(0).name}`);
       [0, 1].sort((a, b) => effStat(this.cur(b), 'spe') - effStat(this.cur(a), 'spe')).forEach(side => this.onEnter(side, true));
     }
     say(msg) { this.log.push(msg); }
@@ -415,7 +415,7 @@
       p.maxHp = p.stats.hp; p.hp = Math.max(1, Math.round(p.maxHp * hpRatio));
       p.ability = normId(form.abilities?.[0] || p.ability);
       p.isMega = true; this.mechanicUsed[side].mega = true;
-      this.say(`✨ ${p.name} Mega 进化了！`);
+      this.say(`✨ ${p.name} 超级进化了！`);
       this.applyEntryAbility(side);
       return true;
     }
@@ -448,7 +448,7 @@
       if (!p || p.fainted || this.mechanicUsed[side].tera || p.mechanic !== 'tera' || !p.teraType || p.terastallized) return false;
       p.originalTypes = p.types.slice();
       p.types = [p.teraType]; p.terastallized = true; this.mechanicUsed[side].tera = true;
-      this.say(`💎 ${p.name} 太晶化了！属性变为 ${p.teraType}！`);
+      this.say(`💎 ${p.name} 太晶化了！属性变为 ${root.PKMMechanics?.TYPE_ZH?.[p.teraType] || p.teraType}！`);
       return true;
     }
     activateMechanic(side, kind) {
@@ -531,7 +531,7 @@
       const berryStatus = { cheriberry: 'par', chestoberry: 'slp', pechaberry: 'psn', rawstberry: 'brn', aspearberry: 'frz' }[item];
       if (berryStatus && (p.status === berryStatus || (item === 'pechaberry' && p.status === 'tox'))) { p.status = null; this.consumeItem(p); this.say(`${p.name} 吃下树果，异常状态痊愈了！`); return; }
       if (item === 'persimberry' && p.volatile.confusion) { delete p.volatile.confusion; this.consumeItem(p); this.say(`${p.name} 吃下柿仔果，混乱解除了！`); return; }
-      if (item === 'leppaberry' && p.moves.some(m => m.ppLeft <= 0)) { const m = p.moves.find(x => x.ppLeft <= 0); m.ppLeft = Math.min(m.pp, m.ppLeft + 10); this.consumeItem(p); this.say(`${p.name} 吃下苹野果，回复了 ${m.name} 的 PP！`); return; }
+      if (item === 'leppaberry' && p.moves.some(m => m.ppLeft <= 0)) { const m = p.moves.find(x => x.ppLeft <= 0); m.ppLeft = Math.min(m.pp, m.ppLeft + 10); this.consumeItem(p); this.say(`${p.name} 吃下苹野果，回复了 ${m.name} 的招式点数！`); return; }
       if (event === 'hit') {
         if (item === 'keeberry' && ctx.move?.category === 'Physical') { this.consumeItem(p); this.changeStages(p, { def: 1 }, p); return; }
         if (item === 'marangaberry' && ctx.move?.category === 'Special') { this.consumeItem(p); this.changeStages(p, { spd: 1 }, p); return; }
@@ -783,7 +783,7 @@
       if (user.dynamaxed) move = makeMaxMove(user, baseMove);
       if (!this.canMove(user, baseMove)) return;
       if (baseMove.ppLeft > 0) baseMove.ppLeft--;
-      if (wantsZ) { this.mechanicUsed[side].z = true; this.say(`💥 ${user.name} 发动了 Z 招式！`); }
+      if (wantsZ) { this.mechanicUsed[side].z = true; this.say(`💥 ${user.name} 发动了Ｚ招式！`); }
       if (['choiceband', 'choicespecs', 'choicescarf'].includes(itemId(user)) && !user.choiceLockedMove) user.choiceLockedMove = baseMove.id;
       this.say(`${user.name} 使用了 ${move.name}！`);
       const selfTarget = !move.basePower && (move.heal || (move.boosts && move.target === 'self') || move.status === undefined && move.volatileStatus === undefined);
@@ -869,9 +869,9 @@
           move._zApplied = true;
           const z = move.zMove;
           if (z.boost) this.changeStages(user, z.boost, user);
-          if (z.effect === 'clearnegativeboost') { for (const k of Object.keys(user.stages)) if (user.stages[k] < 0) user.stages[k] = 0; this.say(`${user.name} 的降低能力被 Z 力量清除了！`); }
-          if (z.effect === 'crit2') { user.volatile.critBoost = 2; this.say(`${user.name} 的 Z 力量让它更容易击中要害！`); }
-          if (z.effect === 'heal') this.heal(user, user.maxHp, 'Z 力量完全回复了体力');
+          if (z.effect === 'clearnegativeboost') { for (const k of Object.keys(user.stages)) if (user.stages[k] < 0) user.stages[k] = 0; this.say(`${user.name} 的降低能力被Ｚ招式力量清除了！`); }
+          if (z.effect === 'crit2') { user.volatile.critBoost = 2; this.say(`${user.name} 的Ｚ招式力量让它更容易击中要害！`); }
+          if (z.effect === 'heal') this.heal(user, user.maxHp, 'Ｚ招式力量完全回复了体力');
         }
         if (move.weather) this.setWeather(move.weather, 5);
         if (move.terrain) this.setTerrain(move.terrain, 5);

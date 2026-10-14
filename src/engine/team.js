@@ -12,7 +12,7 @@
     const [level, viaRaw] = raw;
     const via = viaRaw || '';
     const labels = [];
-    if (level) labels.push(`Lv.${level}`);
+    if (level) labels.push(`等级${level}`);
     if (via.includes('M')) labels.push('招式学习器');
     if (via.includes('T')) labels.push('教授招式');
     if (via.includes('E')) labels.push('蛋招式');
@@ -124,19 +124,19 @@
       for (const midRaw of mv) {
         const mid = normId(midRaw);
         if (!MOVES[mid]) { errors.push(`${at} ${sid}：招式不存在（${midRaw}）`); continue; }
-        if (knownLearnset && !isLegalMove(sid, mid, level)) errors.push(`${at} ${sid}：${MOVES[mid].name} 不在合法学习面内（Lv.${level}）`);
+        if (knownLearnset && !isLegalMove(sid, mid, level)) errors.push(`${at} ${sid}：${MOVES[mid].name} 不在合法学习面内（等级${level}）`);
       }
       const mechKind = mechanicOf(entry);
       if (entry.mechanic && !mechKind) errors.push(`${at} ${sid}：未知战斗机制（${entry.mechanic}）`);
       if (mechKind === 'mega') {
         const forms = megaForms(sid);
-        if (!forms.length) errors.push(`${at} ${sid}：该物种没有 Mega 形态`);
-        else if (!entry.megaForm || !forms.some(f => f.id === normId(entry.megaForm))) errors.push(`${at} ${sid}：请选择有效的 Mega 形态`);
+        if (!forms.length) errors.push(`${at} ${sid}：该宝可梦没有超级形态`);
+        else if (!entry.megaForm || !forms.some(f => f.id === normId(entry.megaForm))) errors.push(`${at} ${sid}：请选择有效的超级形态`);
       }
       if (mechKind === 'z') {
         const zType = root.PKMMechanics?.canonType(entry.zType) || root.PKMMechanics?.typeForZCrystal(entry.item);
-        if (!zType) errors.push(`${at} ${sid}：Z 招式需要选择 Z 属性或携带对应 Z 水晶`);
-        else if (!mv.some(mid => MOVES[normId(mid)]?.type === zType)) errors.push(`${at} ${sid}：没有 ${zType} 属性招式，无法使用该 Z 水晶`);
+        if (!zType) errors.push(`${at} ${sid}：Ｚ招式需要选择Ｚ属性或携带对应Ｚ纯晶`);
+        else if (!mv.some(mid => MOVES[normId(mid)]?.type === zType)) errors.push(`${at} ${sid}：没有 ${zType} 属性招式，无法使用该Ｚ纯晶`);
       }
       if (mechKind === 'tera' && !root.PKMMechanics?.canonType(entry.teraType)) errors.push(`${at} ${sid}：太晶化需要选择有效的太晶属性`);
       if (mechKind === 'dynamax' && entry.dynamaxForm === 'gmax' && !gmaxForm(sid)) warnings.push(`${at} ${sid}：没有超极巨化形态，将按普通极巨化处理`);

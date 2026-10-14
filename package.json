@@ -1,11 +1,13 @@
 {
   "name": "pokemon-battle",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "test": "node tests/run-tests.mjs",
     "build-data": "node tools/build-data.mjs",
-    "serve": "python3 -m http.server 8000"
+    "serve": "python3 -m http.server 8000",
+    "build-zh": "node tools/build-zh-names.mjs",
+    "build-sprites": "node tools/build-sprite-map.mjs"
   }
 }

@@ -3,108 +3,149 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>宝可梦对战 · 自研引擎（第四阶段）</title>
-<link rel="stylesheet" href="./src/ui/styles.css">
+<title>宝可梦对战系统</title>
+<link rel="stylesheet" href="./src/ui/styles.css?v=0.8.3">
 </head>
 <body>
 <header class="top">
-  <h1><span class="ball"></span>宝可梦对战</h1>
-  <div class="controls">
-    <label>对手
+  <div class="brand" aria-label="宝可梦对战系统">
+    <span class="ball" aria-hidden="true"></span>
+    <div>
+      <h1>宝可梦 <span>对战系统</span></h1>
+      <p>粉色链接 · 单人对战模拟</p>
+    </div>
+  </div>
+  <div class="controls header-controls">
+    <label class="control-field">对手
       <select id="sel-enemy">
         <option value="rookie">短裤小子（简单）</option>
         <option value="wild">野生宝可梦（简单）</option>
         <option value="gym" selected>馆主·岚（普通）</option>
-        <option value="champion">冠军·希罗娜风（专家）</option>
+        <option value="champion">冠军·希罗娜（专家）</option>
       </select>
     </label>
-    <label>AI 难度
+    <label class="control-field">电脑难度
       <select id="sel-diff">
-        <option value="easy">easy</option>
-        <option value="normal" selected>normal</option>
-        <option value="hard">hard</option>
-        <option value="expert">expert</option>
+        <option value="easy">简单</option>
+        <option value="normal" selected>普通</option>
+        <option value="hard">困难</option>
+        <option value="expert">专家</option>
       </select>
     </label>
-    <button id="btn-start" class="red" type="button">开始新战斗</button>
+    <button id="btn-start" class="red start-button" type="button">开始对战</button>
   </div>
 </header>
 
 <main class="panel">
-  <div class="arena">
+  <section class="battle-screen" aria-label="横版战斗画面">
+  <section class="arena" aria-label="战斗场地">
+    <div class="arena-topline" aria-hidden="true"><span>实时战场</span><i></i><i></i><i></i></div>
+    <div class="vs-badge" aria-hidden="true">对决</div>
+
     <section class="fighter enemy">
-      <div>
+      <div class="fighter-info">
+        <span class="side-label">敌方</span>
         <div class="name" id="e-name">—</div>
         <div class="sub" id="e-sub">—</div>
-        <div class="hpbar"><div class="hpfill" id="e-hp" style="width:100%"></div></div>
-        <div class="sub" id="e-hptext">—</div>
+        <div class="hpbar" aria-hidden="true"><div class="hpfill" id="e-hp" style="width:100%"></div></div>
+        <div class="hptext" id="e-hptext">—</div>
         <div class="teamrow" id="e-team"></div>
       </div>
-      <div class="sprite" id="e-sprite"><span class="fallback">❔</span></div>
+      <div class="sprite" id="e-sprite"><span class="fallback">？</span></div>
     </section>
 
-    <section class="fighter">
-      <div class="sprite" id="p-sprite"><span class="fallback">❔</span></div>
-      <div>
+    <section class="fighter player">
+      <div class="sprite" id="p-sprite"><span class="fallback">？</span></div>
+      <div class="fighter-info">
+        <span class="side-label player-label">我方</span>
         <div class="name" id="p-name">—</div>
         <div class="sub" id="p-sub">—</div>
-        <div class="hpbar"><div class="hpfill" id="p-hp" style="width:100%"></div></div>
-        <div class="sub" id="p-hptext">—</div>
+        <div class="hpbar" aria-hidden="true"><div class="hpfill" id="p-hp" style="width:100%"></div></div>
+        <div class="hptext" id="p-hptext">—</div>
         <div class="teamrow" id="p-team"></div>
       </div>
     </section>
-  </div>
 
-  <div id="field-state" class="note" style="text-align:center;font-weight:700;margin-top:8px">场地：无特殊效果</div>
-  <div class="result hidden" id="result"></div>
+    <div id="field-state" class="field-state">战场：无特殊效果</div>
+  </section>
 
-  <div class="grid2" style="margin-top:12px">
-    <div>
-      <h3 style="margin:4px 0 8px">选择招式</h3>
-      <div class="switches" id="mechanics" style="margin-bottom:8px"></div>
-      <div class="moves" id="moves"></div>
-      <h3 style="margin:14px 0 8px">换人</h3>
-      <div class="switches" id="switches"></div>
-      <p class="note">规则（第四阶段A）：单打、6v6 队伍、特性与道具、天气/场地/钉子/墙，并已加入 Mega 进化、Z 招式、极巨化/超极巨化、太晶化（每方每种机制一场一次，在出招前点机制按钮）。双打 2v2 将作为下一小阶段单独接入。</p>
-    </div>
-    <div>
-      <h3 style="margin:4px 0 8px">战斗日志</h3>
+  <div class="result hidden" id="result" role="status"></div>
+
+  <section class="battle-deck" aria-label="战斗指令台">
+    <div class="card log-card">
+      <div class="card-heading">
+        <span class="heading-icon">记</span>
+        <div>
+          <h3>战斗记录</h3>
+          <p>最新战况</p>
+        </div>
+        <span class="sys-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
       <div class="log" id="log"></div>
     </div>
-  </div>
 
-  <details style="margin-top:14px" open>
-    <summary><b>队伍编辑器（合法配招）</b></summary>
-    <p class="note">招式下拉只会列出该宝可梦在现行世代（Gen 9）学习面内的合法招式；可同时设置特性、道具与战斗机制（Mega 形态、Z 属性、极巨化/超极巨化、太晶属性）。编辑会自动保存在本机浏览器中；勾选后点上方“开始新战斗”即按编辑队伍开战。</p>
-    <div class="controls" style="margin-bottom:8px">
-      <button id="btn-validate" class="blue" type="button">校验两队</button>
-      <button id="btn-save-teams" type="button">保存编辑</button>
-      <button id="btn-random-player" type="button">随机我方队伍</button>
-      <button id="btn-reset-teams" type="button">恢复内置队伍</button>
-      <label><input type="checkbox" id="chk-custom-player" checked> 使用我方编辑队伍</label>
-      <label><input type="checkbox" id="chk-custom-enemy"> 使用敌方编辑队伍</label>
+    <div class="card action-card">
+      <div class="card-heading action-heading">
+        <span class="heading-icon fight-icon">战</span>
+        <div>
+          <h3>战斗指令</h3>
+          <p>请选择行动</p>
+        </div>
+      </div>
+      <div class="switches mechanics" id="mechanics"></div>
+      <div class="moves" id="moves"></div>
+
+      <div class="subsection-heading"><span>换</span><em>更换宝可梦</em></div>
+      <div class="switches" id="switches"></div>
+      <p class="note rules-note">单打六对六 · 特性与道具 · 天气、场地、钉子与墙 · 超级进化、Ｚ招式、极巨化与太晶化（每方每种一场一次）</p>
     </div>
-    <div id="validate-msg" class="note" style="margin-bottom:8px"></div>
-    <div class="grid2">
-      <div><h3 style="margin:4px 0 8px">我方队伍</h3><div id="editor-player"></div></div>
-      <div><h3 style="margin:4px 0 8px">敌方队伍</h3><div id="editor-enemy"></div></div>
+  </section>
+  </section>
+
+  <details class="section-card editor-section" open>
+    <summary><span>编</span>队伍编辑器</summary>
+    <div class="section-body">
+      <p class="note">招式列表只会显示该宝可梦在第九代可以合法学会的招式；可以同时设置特性、道具与战斗机制。编辑内容会自动保存在本机浏览器中；勾选下方选项后，点击上方“开始对战”即可使用编辑队伍。</p>
+      <div class="controls editor-toolbar">
+        <button id="btn-validate" class="blue" type="button">校验两队</button>
+        <button id="btn-save-teams" type="button">保存编辑</button>
+        <button id="btn-random-player" type="button">随机生成我方队伍</button>
+        <button id="btn-reset-teams" type="button">恢复内置队伍</button>
+        <label class="check-pill"><input type="checkbox" id="chk-custom-player" checked>使用我方编辑队伍</label>
+        <label class="check-pill"><input type="checkbox" id="chk-custom-enemy">使用敌方编辑队伍</label>
+      </div>
+      <div id="validate-msg" class="validate-msg"></div>
+      <div class="editor-grid">
+        <div class="editor-column player-column">
+          <h3><span class="team-dot player-dot"></span>我方队伍</h3>
+          <div id="editor-player"></div>
+        </div>
+        <div class="editor-column enemy-column">
+          <h3><span class="team-dot enemy-dot"></span>敌方队伍</h3>
+          <div id="editor-enemy"></div>
+        </div>
+      </div>
+      <datalist id="species-list"></datalist>
     </div>
-    <datalist id="species-list"></datalist>
   </details>
 
-  <details style="margin-top:14px">
-    <summary><b>高级：粘贴战斗配置（与酒馆卡协议兼容）</b></summary>
-    <p class="note">把 AI 输出的 <span class="kbd">&lt;PKM_BATTLE&gt;{...}&lt;/PKM_BATTLE&gt;</span> 或纯 JSON 粘进来，即可按配置开战（支持 p1/p2、entrants、party 现场构造）。也可以由酒馆宿主页面通过 <span class="kbd">postMessage</span> 发送 <span class="kbd">{type:"PKM_BATTLE_CONFIG", payload:{...}}</span>，战斗结束后本页会回发 <span class="kbd">{type:"PKM_BATTLE_RESULT", payload:{...}}</span>。</p>
-    <textarea id="txt-config" placeholder='{"difficulty":"normal","p1":{"entrants":[{"name":"player"}]},"p2":{"entrants":[{"name":"野生","type":"wild","party":[{"name":"Garchomp","lv":60,"moves":["Earthquake","Dragon Claw","Stone Edge","Swords Dance"]}]}]}}'></textarea>
-    <div style="margin-top:8px"><button id="btn-config" class="blue" type="button">按配置开始</button></div>
+  <details class="section-card advanced-section">
+    <summary><span>链</span>高级设置：导入战斗配置</summary>
+    <div class="section-body">
+      <p class="note">把角色卡输出的战斗配置粘贴到下方，即可按配置开始对战；也可以由角色卡页面自动发送配置。战斗结束后，本页会自动把结果回传给角色卡。</p>
+      <textarea id="txt-config" placeholder="在此粘贴角色卡输出的战斗配置"></textarea>
+      <div class="config-actions"><button id="btn-config" class="blue" type="button">按配置开始</button></div>
+    </div>
   </details>
+
+  <footer class="footer-note">非官方同人练习项目 · 数据来自公开资料 · 精灵图加载失败时会自动显示占位图 · 版本 v0.8.3</footer>
 </main>
 
-<script src="./src/engine/typechart.js"></script>
-<script src="./src/engine/mechanics.js"></script>
-<script src="./src/engine/battle.js"></script>
-<script src="./src/engine/team.js"></script>
-<script src="./src/data/presets.js"></script>
-<script src="./src/ui/app.js"></script>
+<script src="./src/engine/typechart.js?v=0.8.3"></script>
+<script src="./src/engine/mechanics.js?v=0.8.3"></script>
+<script src="./src/engine/battle.js?v=0.8.3"></script>
+<script src="./src/engine/team.js?v=0.8.3"></script>
+<script src="./src/data/presets.js?v=0.8.3"></script>
+<script src="./src/ui/app.js?v=0.8.3"></script>
 </body>
 </html>
