@@ -262,6 +262,20 @@
     img.src = MECHANIC_ICON_SRC[kind] || MECHANIC_ICON_SRC.mega;
     pop.appendChild(img);
     box.appendChild(pop);
+    // 图标对准精灵本体中心：按精灵图实际渲染位置算（含 object-fit 留白与脚底对齐位移），
+    // 不能写死框的 50%/36%——宝可梦经对齐位移后身体中心不在那里，图标会飘偏。
+    const spriteImg = box.querySelector('img');
+    if (spriteImg && spriteImg.naturalWidth && spriteImg.naturalHeight) {
+      const br = box.getBoundingClientRect();
+      const ir = spriteImg.getBoundingClientRect();
+      const scale = Math.min(ir.width / spriteImg.naturalWidth, ir.height / spriteImg.naturalHeight);
+      const cW = spriteImg.naturalWidth * scale;
+      const cH = spriteImg.naturalHeight * scale;
+      const cx = ir.left + (ir.width - cW) / 2 + cW / 2 - br.left;
+      const cy = ir.top + (ir.height - cH) / 2 + cH * 0.44 - br.top;
+      pop.style.left = `${cx.toFixed(1)}px`;
+      pop.style.top = `${cy.toFixed(1)}px`;
+    }
     setTimeout(() => pop.remove(), ttl);
   }
   function swapSpriteSrc(img, url) {
@@ -1063,11 +1077,11 @@
 
   async function init() {
     const [dex, moves, learnsets, zh, spriteMap] = await Promise.all([
-      fetch('./src/data/pokedex.json?v=0.8.3').then(r => r.json()),
-      fetch('./src/data/moves.json?v=0.8.3').then(r => r.json()),
-      fetch('./src/data/learnsets.json?v=0.8.3').then(r => r.json()),
-      fetch('./src/data/zh-names.json?v=0.8.3').then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('./src/data/sprite-map.json?v=0.8.3').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/pokedex.json?v=0.8.4').then(r => r.json()),
+      fetch('./src/data/moves.json?v=0.8.4').then(r => r.json()),
+      fetch('./src/data/learnsets.json?v=0.8.4').then(r => r.json()),
+      fetch('./src/data/zh-names.json?v=0.8.4').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/sprite-map.json?v=0.8.4').then(r => r.ok ? r.json() : {}).catch(() => ({})),
     ]);
     ZH = zh || {};
     SPRITES = spriteMap?.entries || {};

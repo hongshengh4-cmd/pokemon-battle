@@ -340,6 +340,11 @@ button.red, .start-button { color: #fff; background: linear-gradient(135deg, var
   display: block; width: 100%; height: 100%; object-fit: contain;
   filter: drop-shadow(0 6px 14px rgba(41, 38, 51, .35)) drop-shadow(0 0 14px rgba(255, 255, 255, .8));
 }
+/* 图标里的 img 不是精灵图：隔离 .sprite img 的尺寸与浮动动画，否则图标会被撑成 320px 巨图跑偏 */
+.fighter .sprite .transform-icon-pop > img {
+  width: 100%; height: 100%; max-width: none; max-height: none;
+  object-fit: contain; animation: none;
+}
 
 @keyframes evo-struggle {
   from { transform: translateX(-1px) scaleX(var(--flip, 1)) scale(.985); }
