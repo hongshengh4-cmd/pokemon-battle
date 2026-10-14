@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>宝可梦对战系统</title>
-<link rel="stylesheet" href="./src/ui/styles.css?v=0.8.4">
+<link rel="stylesheet" href="./src/ui/styles.css?v=0.9.0">
 </head>
 <body>
 <header class="top">
@@ -12,14 +12,14 @@
     <span class="ball" aria-hidden="true"></span>
     <div>
       <h1>宝可梦 <span>对战系统</span></h1>
-      <p>粉色链接 · 单人对战模拟</p>
+      <p>粉色链接 · 大世界战斗原型</p>
     </div>
   </div>
   <div class="controls header-controls">
     <label class="control-field">对手
       <select id="sel-enemy">
         <option value="rookie">短裤小子（简单）</option>
-        <option value="wild">野生宝可梦（简单）</option>
+        <option value="wild">野生遭遇（可捕获）</option>
         <option value="gym" selected>馆主·岚（普通）</option>
         <option value="champion">冠军·希罗娜（专家）</option>
       </select>
@@ -32,6 +32,8 @@
         <option value="expert">专家</option>
       </select>
     </label>
+    <button id="btn-wild" type="button" class="world-shortcut">野生遭遇</button>
+    <button id="btn-box" type="button" class="world-shortcut">仓库 <span id="box-count">0</span></button>
     <button id="btn-start" class="red start-button" type="button">开始对战</button>
   </div>
 </header>
@@ -84,25 +86,45 @@
       <div class="log" id="log"></div>
     </div>
 
-    <div class="card action-card">
-      <div class="card-heading action-heading">
-        <span class="heading-icon fight-icon">战</span>
-        <div>
-          <h3>战斗指令</h3>
-          <p>请选择行动</p>
-        </div>
+    <div class="card action-card" id="action-card" aria-label="战斗行动菜单">
+      <div class="command-heading">
+        <div><span class="encounter-tag" id="encounter-tag">训练家对战</span><h3 id="command-title">请选择行动</h3></div>
+        <button id="command-back" class="command-back" type="button" hidden>‹ 返回</button>
       </div>
-      <div class="switches mechanics" id="mechanics"></div>
-      <div class="moves" id="moves"></div>
-
-      <div class="subsection-heading"><span>换</span><em>更换宝可梦</em></div>
-      <div class="switches" id="switches"></div>
-      <p class="note rules-note">单打六对六 · 特性与道具 · 天气、场地、钉子与墙 · 超级进化、Ｚ招式、极巨化与太晶化（每方每种一场一次）</p>
+      <div id="command-home" class="command-home">
+        <button type="button" id="command-fight" class="command-choice choice-fight"><span class="command-symbol">⚔</span><strong>战斗</strong><small>选择招式 / 战斗机制</small><b aria-hidden="true">↗</b></button>
+        <button type="button" id="command-switch" class="command-choice choice-switch"><span class="command-symbol">⇄</span><strong>换人</strong><small>查看队伍 / 更换出战</small><b aria-hidden="true">↗</b></button>
+        <button type="button" id="command-balls" class="command-choice choice-balls"><span class="mini-ball" aria-hidden="true"></span><strong>精灵球</strong><small id="capture-availability">仅限野生宝可梦</small><b aria-hidden="true">↗</b></button>
+      </div>
+      <div id="command-fight-panel" class="command-panel fight-panel" hidden>
+        <div class="switches mechanics" id="mechanics"></div>
+        <div class="moves" id="moves"></div>
+      </div>
+      <div id="command-switch-panel" class="command-panel" hidden><div class="switches" id="switches"></div></div>
+      <div id="command-balls-panel" class="command-panel" hidden>
+        <p id="capture-hint" class="capture-hint"></p><div id="ball-list" class="ball-list"></div>
+      </div>
+      <div id="command-end" class="command-end" hidden>
+        <p id="command-end-text"></p><div><button type="button" id="btn-next-wild">下一次野生遭遇</button><button type="button" id="btn-end-box">查看仓库</button></div>
+      </div>
+      <p id="command-status" class="command-status" role="status" aria-live="polite"></p>
     </div>
   </section>
   </section>
 
-  <details class="section-card editor-section" open>
+  <details class="section-card collection-section" id="collection-section">
+    <summary><span>藏</span>宝可梦仓库 <b id="collection-count">0</b></summary>
+    <div class="section-body">
+      <div class="collection-toolbar"><div><h3>一起出发的新伙伴</h3><p>捕获记录保存在本机浏览器。选择队伍位置加入编队，下一场对战生效；不会更改本场队伍。</p></div><div id="bag-summary" class="bag-summary"></div></div>
+      <p id="save-warning" class="save-warning" role="status" hidden></p>
+      <div id="collection-list" class="collection-list"></div>
+      <p id="collection-message" role="status" class="collection-message"></p>
+      <div class="save-tools"><button type="button" id="btn-export-save">导出存档</button><button type="button" id="btn-import-save">导入存档</button><input id="file-import-save" type="file" accept=".json,application/json" hidden><button type="button" id="btn-supply">领取测试补给</button></div>
+      <p class="note">当前是大世界战斗原型：测试补给补至精灵球20 / 超级球10 / 高级球5，不清空仓库。世界地图、商店与正式经济系统尚未接入。清理浏览器数据会清除本机存档，请定期导出。</p>
+    </div>
+  </details>
+
+  <details class="section-card editor-section">
     <summary><span>编</span>队伍编辑器</summary>
     <div class="section-body">
       <p class="note">招式列表只会显示该宝可梦在第九代可以合法学会的招式；可以同时设置特性、道具与战斗机制。编辑内容会自动保存在本机浏览器中；勾选下方选项后，点击上方“开始对战”即可使用编辑队伍。</p>
@@ -138,14 +160,19 @@
     </div>
   </details>
 
-  <footer class="footer-note">非官方同人练习项目 · 数据来自公开资料 · 精灵图加载失败时会自动显示占位图 · 版本 v0.8.4</footer>
+  <footer class="footer-note">非官方同人练习项目 · 数据来自公开资料 · 精灵图加载失败时会自动显示占位图 · 版本 v0.9.0</footer>
 </main>
 
-<script src="./src/engine/typechart.js?v=0.8.4"></script>
-<script src="./src/engine/mechanics.js?v=0.8.4"></script>
-<script src="./src/engine/battle.js?v=0.8.4"></script>
-<script src="./src/engine/team.js?v=0.8.4"></script>
-<script src="./src/data/presets.js?v=0.8.4"></script>
-<script src="./src/ui/app.js?v=0.8.4"></script>
+<script src="./src/engine/typechart.js?v=0.9.0"></script>
+<script src="./src/engine/mechanics.js?v=0.9.0"></script>
+<script src="./src/engine/battle.js?v=0.9.0"></script>
+<script src="./src/engine/capture.js?v=0.9.0"></script>
+<script src="./src/world/save.js?v=0.9.0"></script>
+<script src="./src/ui/capture-fx.js?v=0.9.0"></script>
+<script src="./src/engine/team.js?v=0.9.0"></script>
+<script src="./src/data/presets.js?v=0.9.0"></script>
+<script src="./src/ui/sprite-anchor.js?v=0.9.0"></script>
+<script src="./src/ui/sprite-sizing.js?v=0.9.0"></script>
+<script src="./src/ui/app.js?v=0.9.0"></script>
 </body>
 </html>

@@ -1,24 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 250" role="img" aria-label="自制超级进化图标">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 -12 174 222" role="img" aria-labelledby="megaTitle">
+  <title id="megaTitle">超级进化 · 彩虹双螺旋标志</title>
   <defs>
-    <linearGradient id="megaRainbow" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#7c3aed"/>
-      <stop offset=".27" stop-color="#2563eb"/>
-      <stop offset=".5" stop-color="#22c55e"/>
-      <stop offset=".74" stop-color="#facc15"/>
-      <stop offset="1" stop-color="#fb7185"/>
+    <linearGradient id="megaRainbow" gradientUnits="userSpaceOnUse" x1="126" y1="3" x2="161" y2="195">
+      <stop offset="0" stop-color="#d54dff"/>
+      <stop offset=".17" stop-color="#f36cfa"/>
+      <stop offset=".32" stop-color="#ffc784"/>
+      <stop offset=".43" stop-color="#ffff75"/>
+      <stop offset=".57" stop-color="#ddff64"/>
+      <stop offset=".73" stop-color="#72fba2"/>
+      <stop offset="1" stop-color="#59edec"/>
     </linearGradient>
-    <clipPath id="megaClip"><path d="M110 6c16 30 55 43 53 76-2 31-39 40-57 61-16 19-11 43 4 101-17-32-55-44-53-77 2-31 39-40 57-61 16-19 11-43-4-100Z"/></clipPath>
+    <!-- A single, broad twisted ladder with four genuinely transparent openings.
+         Redrawn as a vector from the user's reference; no red screenshot background/UI. -->
+    <path id="megaHelix" fill-rule="evenodd" d="
+      M146 3
+      C150 3 149 7 147 12
+      C138 34 162 44 184 65
+      C207 87 221 113 214 138
+      C207 169 176 194 129 195
+      C120 196 126 186 125 178
+      C124 163 112 151 99 135
+      C82 114 73 94 77 73
+      C81 39 107 13 136 5
+      C140 4 143 3 146 3 Z
+      M128 24
+      C129 35 138 43 151 55
+      C139 53 120 49 106 44
+      C111 36 118 29 128 24 Z
+      M102 55
+      C130 63 156 65 174 78
+      C183 85 189 94 192 104
+      C167 93 138 84 100 77
+      C99 68 100 60 102 55 Z
+      M105 91
+      C135 96 165 106 194 118
+      C193 128 191 136 184 144
+      C159 129 137 124 118 121
+      C112 112 108 101 105 91 Z
+      M134 140
+      C149 143 165 151 176 157
+      C162 169 149 176 139 179
+      C143 167 141 151 134 140 Z"/>
+    <filter id="megaEdgeGlow" x="-30%" y="-25%" width="160%" height="150%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.4"/>
+    </filter>
   </defs>
-  <path d="M110 6c16 30 55 43 53 76-2 31-39 40-57 61-16 19-11 43 4 101-17-32-55-44-53-77 2-31 39-40 57-61 16-19 11-43-4-100Z" fill="url(#megaRainbow)" stroke="#71345f" stroke-width="7" stroke-linejoin="round"/>
-  <g clip-path="url(#megaClip)">
-    <path d="M30 76c55-29 116-27 166 4l-9 25c-50-23-103-24-149-2Z" fill="#fff" opacity=".5"/>
-    <path d="M31 158c55-29 116-27 166 4l-9 25c-50-23-103-24-149-2Z" fill="#fff" opacity=".34"/>
-    <path d="M110 6c-2 36-17 55-45 74 19 6 38 2 54-11 17-15 14-42-9-63Z" fill="#fff" opacity=".24"/>
-  </g>
-  <path d="M75 78c25-14 51-14 74 1-24 14-50 14-74-1Z" fill="#fff" opacity=".68"/>
-  <path d="M72 161c26-14 53-14 77 1-25 14-52 14-77-1Z" fill="#fff" opacity=".5"/>
-  <circle cx="35" cy="48" r="5" fill="#fb7185"/>
-  <circle cx="187" cy="93" r="4" fill="#38bdf8"/>
-  <circle cx="31" cy="194" r="4" fill="#facc15"/>
-  <circle cx="184" cy="211" r="5" fill="#a78bfa"/>
+  <use href="#megaHelix" fill="none" stroke="#fff3ff" stroke-width="4.5" stroke-linejoin="round" opacity=".8" filter="url(#megaEdgeGlow)"/>
+  <use href="#megaHelix" fill="url(#megaRainbow)" stroke="#fff7ff" stroke-width="2.2" stroke-linejoin="round"/>
 </svg>

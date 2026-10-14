@@ -322,6 +322,10 @@
       this.turnCount = 0;
       this.log = [];
       this.winner = null; // 0 | 1 | null
+      this.encounterType = opts.encounterType === 'wild' && teamB.length === 1 ? 'wild' : 'trainer';
+      this.ballStock = Object.fromEntries(['pokeball', 'greatball', 'ultraball'].map(id => [id,
+        Number.isInteger(opts.balls?.[id]) && opts.balls[id] >= 0 ? opts.balls[id] : 0]));
+      this.outcome = null; this.capture = null; this.lastCapture = null;
       this.pendingSwitch = null; // side index that must switch (player-facing)
       this.mechanicUsed = [{ mega: false, z: false, dynamax: false, tera: false }, { mega: false, z: false, dynamax: false, tera: false }];
       this.teams.forEach((team, side) => team.forEach(p => { p._battle = this; p._side = side; p._enteredThisTurn = false; }));
@@ -706,6 +710,7 @@
 
     /** Execute one full turn. playerAction = {kind:'move'|'switch', index}. Returns log lines added. */
     turn(playerAction) {
+      if (playerAction?.kind === 'capture') return this.captureTurn ? this.captureTurn(playerAction) : [];
       if (this.winner !== null || this.pendingSwitch !== null) return [];
       const start = this.log.length;
       for (const side of [0, 1]) if (this.cur(side)) this.cur(side)._enteredThisTurn = false;
@@ -1015,12 +1020,17 @@
     }
 
     updateWinner() {
+      if (this.outcome === 'captured') return;
       if (this.alive(1).length === 0) { this.winner = 0; this.pendingSwitch = null; this.say('战斗胜利！'); }
       else if (this.alive(0).length === 0) { this.winner = 1; this.say('眼前一片漆黑……'); }
     }
     result() {
       return {
         winner: this.winner === null ? null : (this.winner === 0 ? 'player' : 'enemy'),
+        outcome: this.outcome || (this.winner === null ? null : this.winner === 0 ? 'victory' : 'defeat'),
+        encounterType: this.encounterType,
+        ballStock: { ...this.ballStock },
+        capture: this.capture ? JSON.parse(JSON.stringify(this.capture)) : null,
         turns: this.turnCount,
         weather: this.weather,
         field: JSON.parse(JSON.stringify(this.field)),

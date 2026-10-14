@@ -4,10 +4,14 @@
   const $ = id => document.getElementById(id);
   const normId = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   let battle = null, moveCache = {}, selectedMechanic = null, animating = false;
+  let menuView = 'home', commandMessage = '', encounterId = '', collectionLimit = 48, announcedBattle = null;
+  let worldStorage = null; try { worldStorage = window.localStorage; } catch (_) {}
+  const worldStore = new PKMWorldSave.Store(worldStorage);
   let ZH = { species: {}, moves: {}, abilities: {}, natures: {}, types: {}, categories: {} };
   let SPRITES = {};
   let SPRITE_FEET = {};
   let SPRITE_FEETX = {};
+  let SPRITE_BODY = {};
   let textPairs = [], speciesZhToId = {}, textMap = new Map(), textRegex = null;
   const zhType = t => ZH.types?.[t] || PKMMechanics.TYPE_ZH[t] || t || '无属性';
   const zhCat = c => ZH.categories?.[c] || ({ Physical: '物理', Special: '特殊', Status: '变化' }[c] || c || '变化');
@@ -109,30 +113,53 @@
     const fresh = attempts.filter(url => !spriteFailed.has(url));
     return fresh.length ? fresh : attempts;
   }
-  // 按离线测量的“脚底位置”（tools/measure-sprites.py）把精灵的脚对齐到地面阴影
-  function groundAlign(img, url, fallbackFrac, fallbackFracX) {
-    const frac = (url && SPRITE_FEET[url] != null) ? SPRITE_FEET[url] : fallbackFrac;
-    if (frac == null || !img.naturalWidth || !img.naturalHeight) return;
-    const box = img.parentElement;
-    if (!box || !img.clientHeight) return;
-    const scale = Math.min(img.clientWidth / img.naturalWidth, img.clientHeight / img.naturalHeight);
-    const contentH = img.naturalHeight * scale;
-    const feetY = img.offsetTop + (img.clientHeight - contentH) / 2 + frac * contentH;
-    const target = box.clientHeight - 27; // 地面阴影椭圆中心约在盒底上方 27px
-    let dy = target - feetY;
-    dy = Math.max(-24, Math.min(115, dy));
-    img.style.translate = `0px ${dy.toFixed(1)}px`;
-    // 阴影横向跟到脚底重心（与盒子中心混合，避免长尾巴等极端情况偏太远）
-    const fracX = (url && SPRITE_FEETX[url] != null) ? SPRITE_FEETX[url] : fallbackFracX;
-    if (fracX != null && box.clientWidth) {
-      const contentW = img.naturalWidth * scale;
-      const feetCX = img.offsetLeft + (img.clientWidth - contentW) / 2 + fracX * contentW;
-      const blended = feetCX * 0.85 + (box.clientWidth / 2) * 0.15;
-      const clamped = Math.max(box.clientWidth * 0.12, Math.min(box.clientWidth * 0.88, blended));
-      box.style.setProperty('--shadow-x', `${clamped.toFixed(1)}px`);
-    }
+  // Size is semantic (dex height), not the GIF's canvas size. Layout dimensions
+  // change independently from transform animations, so attacks/entry keep working.
+  function applySpriteSize(img, p) {
+    if (!img || !p) return;
+    img._spriteState = { speciesId: normId(p.speciesId), originalSpeciesId: normId(p.originalSpeciesId || p.speciesId),
+      dynamaxed: !!p.dynamaxed, isMega: !!p.isMega };
+    const profile = PKMSpriteSizing.profile(PKMBattle._dex, img._spriteState.speciesId, img._spriteState);
+    img.style.setProperty('--body-ratio', String(profile.ratio));
+    img.dataset.species = img._spriteState.speciesId;
+    img.dataset.sizeCategory = profile.category;
+    img.parentElement?.classList.toggle('is-dynamax', !!p.dynamaxed);
+    img.parentElement?.classList.toggle('is-mega', !!p.isMega);
   }
+  // Keep the measured feet unchanged; project them through the new layout size.
+  function groundAlign(img, url) {
+    const box = img?.parentElement;
+    if (!box || !img.naturalWidth || !img.naturalHeight || !img.clientHeight) return;
+    const mapped = SPRITES[img.dataset.species];
+    const back = box.id === 'p-sprite';
+    const feet = SPRITE_FEET[url] ?? mapped?.[back ? 'backFeet' : 'frontFeet'] ?? .94;
+    const feetX = SPRITE_FEETX[url] ?? mapped?.[back ? 'backFeetX' : 'frontFeetX'] ?? .5;
+    const style = getComputedStyle(img);
+    const geometry = PKMSpriteSizing.ground({
+      imageLeft: img.offsetLeft, imageTop: img.offsetTop,
+      width: img.clientWidth, height: img.clientHeight,
+      naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
+      boxWidth: box.clientWidth, boxHeight: box.clientHeight,
+      feet, feetX, flip: parseFloat(style.getPropertyValue('--flip')) < 0,
+      permanentScale: parseFloat(style.getPropertyValue('--sprite-scale')) || 1,
+    });
+    if (!geometry) return;
+    img.style.translate = `0px ${geometry.translateY.toFixed(2)}px`;
+    // Mega/Dynamax scale around the actual floor point rather than the GIF edge.
+    img.style.transformOrigin = `50% ${geometry.originY}%`;
+    box.style.setProperty('--shadow-x', `${geometry.shadowX.toFixed(2)}px`);
+    box.style.setProperty('--shadow-width', `${geometry.shadowWidth.toFixed(2)}px`);
+    box.style.setProperty('--shadow-height', `${geometry.shadowHeight.toFixed(2)}px`);
+  }
+  const spriteResizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const img = entry.target.tagName === 'IMG' ? entry.target : entry.target.querySelector(':scope > img');
+      if (img?.isConnected) groundAlign(img, img.currentSrc || img.src);
+    }
+  });
   function setSprite(el, p, back) {
+    const previousImg = el.querySelector(':scope > img');
+    if (previousImg) spriteResizeObserver?.unobserve(previousImg);
     el.innerHTML = '';
     el.classList.toggle('is-mega', !!p.isMega);
     el.classList.toggle('is-dynamax', !!p.dynamaxed);
@@ -144,12 +171,12 @@
     const img = new Image();
     img.alt = displayPokemonName(p);
     img.onload = () => {
-      const url = attempts[idx] || '';
+      const url = img.currentSrc || img.src || attempts[idx] || '';
       let flip = 1;
-      if (back && ((idx === 0 && mapped?.backFallback === 'front') || /\/sprites\/(ani|gen5)\//.test(url))) flip = -1;
+      if (back && ((url === mappedUrl && mapped?.backFallback === 'front') || /\/sprites\/(ani|gen5)\//.test(url))) flip = -1;
       if (!back && /\/sprites\/(ani-back|gen5-back)\//.test(url)) flip = -1;
       img.style.setProperty('--flip', String(flip));
-      groundAlign(img, url, back ? mapped?.backFeet : mapped?.frontFeet, back ? mapped?.backFeetX : mapped?.frontFeetX);
+      groundAlign(img, url);
     };
     img.onerror = () => {
       if (attempts[idx]) spriteFailed.add(attempts[idx]);
@@ -159,8 +186,10 @@
       const s = document.createElement('span');
       s.className = 'fallback'; s.textContent = '？'; el.appendChild(s);
     };
+    applySpriteSize(img, p);
     img.src = attempts[idx];
     el.appendChild(img);
+    spriteResizeObserver?.observe(img);
     if (p.dynamaxed) img.classList.add('state-dynamax');
     if (p.terastallized) { img.classList.add('state-tera'); img.style.setProperty('--mech', FX_TYPE_COLORS[p.teraType] || '#67e8f9'); }
     if (p.dynamaxed) {
@@ -227,12 +256,12 @@
   }
   const FX_TYPE_COLORS = { Normal: '#a8a77a', Fire: '#f08030', Water: '#6390f0', Electric: '#f7d02c', Grass: '#7ac74c', Ice: '#96d9d6', Fighting: '#c22e28', Poison: '#a33ea1', Ground: '#e2bf65', Flying: '#a98ff3', Psychic: '#f95587', Bug: '#a6b91a', Rock: '#b6a136', Ghost: '#735797', Dragon: '#6f35fc', Dark: '#705746', Steel: '#b7b7ce', Fairy: '#d685ad', Stellar: '#7dd3fc' };
   const MECHANIC_ICON_SRC = {
-    mega: './src/ui/icons/mega.svg',
-    dynamax: './src/ui/icons/dynamax.svg',
-    gmax: './src/ui/icons/gigantamax.svg',
-    gigantamax: './src/ui/icons/gigantamax.svg',
-    tera: './src/ui/icons/tera.svg',
-    z: './src/ui/icons/z.svg',
+    mega: './src/ui/icons/mega.svg?v=0.9.0',
+    dynamax: './src/ui/icons/dynamax.svg?v=0.9.0',
+    gmax: './src/ui/icons/gigantamax.svg?v=0.9.0',
+    gigantamax: './src/ui/icons/gigantamax.svg?v=0.9.0',
+    tera: './src/ui/icons/tera.svg?v=0.9.0',
+    z: './src/ui/icons/z.svg?v=0.9.0',
   };
   function spriteUrlForSnapshot(snap, side) {
     if (!snap?.speciesId) return '';
@@ -251,35 +280,57 @@
   };
   function showMechanicIcon(side, kind, ttl = 900) {
     const box = spriteEl(side);
-    if (!box) return;
+    const spriteImg = box?.querySelector(':scope > img');
+    if (!box || !spriteImg) return;
     box.querySelectorAll('.transform-icon-pop').forEach(el => el.remove());
     const pop = document.createElement('span');
-    pop.className = 'transform-icon-pop';
-    pop.classList.add('icon-' + kind);
+    pop.className = 'transform-icon-pop icon-' + kind;
     pop.setAttribute('aria-hidden', 'true');
-    const img = document.createElement('img');
-    img.alt = '';
-    img.src = MECHANIC_ICON_SRC[kind] || MECHANIC_ICON_SRC.mega;
-    pop.appendChild(img);
+    pop.style.setProperty('--icon-duration', `${ttl}ms`);
+    const icon = new Image();
+    icon.alt = '';
+    icon.src = MECHANIC_ICON_SRC[kind];
+    pop.appendChild(icon);
     box.appendChild(pop);
-    // 图标对准精灵本体中心：按精灵图实际渲染位置算（含 object-fit 留白与脚底对齐位移），
-    // 不能写死框的 50%/36%——宝可梦经对齐位移后身体中心不在那里，图标会飘偏。
-    const spriteImg = box.querySelector('img');
-    if (spriteImg && spriteImg.naturalWidth && spriteImg.naturalHeight) {
-      const br = box.getBoundingClientRect();
-      const ir = spriteImg.getBoundingClientRect();
-      const scale = Math.min(ir.width / spriteImg.naturalWidth, ir.height / spriteImg.naturalHeight);
-      const cW = spriteImg.naturalWidth * scale;
-      const cH = spriteImg.naturalHeight * scale;
-      const cx = ir.left + (ir.width - cW) / 2 + cW / 2 - br.left;
-      const cy = ir.top + (ir.height - cH) / 2 + cH * 0.44 - br.top;
-      pop.style.left = `${cx.toFixed(1)}px`;
-      pop.style.top = `${cy.toFixed(1)}px`;
-    }
-    setTimeout(() => pop.remove(), ttl);
+    let frame = 0, lastSize = '', lastUrl = '';
+    const follow = () => {
+      if (!pop.isConnected || !spriteImg.isConnected) return;
+      const url = spriteImg.currentSrc || spriteImg.src;
+      if (spriteImg.complete && spriteImg.naturalWidth) {
+        // Resize and source swaps can change the foot translation. Never reuse the old shape's geometry.
+        const size = `${spriteImg.clientWidth}/${spriteImg.clientHeight}`;
+        if (size !== lastSize || url !== lastUrl) {
+          groundAlign(spriteImg, url);
+          lastSize = size; lastUrl = url;
+        }
+        const br = box.getBoundingClientRect();
+        const ir = spriteImg.getBoundingClientRect();
+        const flip = parseFloat(getComputedStyle(spriteImg).getPropertyValue('--flip')) < 0;
+        // Body-core measurements exclude transparent margins and downweight thin tails/wing tips.
+        // Unmeasured fallback URLs use the known standing point, not an unrelated species' anchor.
+        const anchor = SPRITE_BODY[url] || [SPRITE_FEETX[url] ?? .5, .5];
+        const point = PKMSpriteAnchor.project({ rect: ir, width: spriteImg.clientWidth,
+          height: spriteImg.clientHeight, naturalWidth: spriteImg.naturalWidth,
+          naturalHeight: spriteImg.naturalHeight, anchor, flip });
+        const sx = br.width / box.offsetWidth, sy = br.height / box.offsetHeight;
+        if (point && sx > 0 && sy > 0) {
+          pop.style.left = `${(point.x - br.left) / sx - box.clientLeft}px`;
+          pop.style.top = `${(point.y - br.top) / sy - box.clientTop}px`;
+          const extent = Math.max(point.contentWidth / sx, point.contentHeight / sy);
+          const sizePx = PKMSpriteAnchor.iconSize(extent, kind);
+          pop.style.width = pop.style.height = `${sizePx}px`;
+          pop.style.visibility = 'visible';
+        }
+      } else pop.style.visibility = 'hidden';
+      frame = requestAnimationFrame(follow);
+    };
+    follow();
+    setTimeout(() => { cancelAnimationFrame(frame); pop.remove(); }, ttl);
   }
-  function swapSpriteSrc(img, url) {
-    if (!img || !url || img.src === url) return;
+  function swapSpriteSrc(img, url, state) {
+    if (!img || !url) return;
+    if (state) applySpriteSize(img, state);
+    if (img.src === url) { groundAlign(img, url); return; }
     const originalOnError = img.onerror;
     img.onerror = () => { img.onerror = originalOnError; };
     img.src = url;
@@ -298,7 +349,7 @@
       img.classList.remove('evo-silhouette');
       img.classList.add('evo-burst');
       await waitMs(110);
-      if (opts.newUrl) swapSpriteSrc(img, opts.newUrl);
+      if (opts.newUrl) swapSpriteSrc(img, opts.newUrl, opts.nextSprite);
       if (opts.prefix && opts.readyName) $(opts.prefix + '-name').textContent = opts.readyName;
       showBanner(...TRANSFORM_BANNERS.mega);
       await waitMs(230);
@@ -307,13 +358,15 @@
       await waitMs(760);
       img.classList.remove('evo-finish');
     } else if (kind === 'dynamax') {
+      applySpriteSize(img, { ...img._spriteState, dynamaxed: true });
       box.classList.add('is-dynamax');
+      groundAlign(img, img.currentSrc || img.src);
       img.classList.add('dynamax-burst');
       showMechanicIcon(side, opts.gmax ? 'gmax' : 'dynamax', 950);
       setTimeout(() => showBanner(...TRANSFORM_BANNERS[opts.gmax ? 'gmax' : 'dynamax']), 200);
       if (opts.newUrl) {
         await waitMs(500);
-        swapSpriteSrc(img, opts.newUrl);
+        swapSpriteSrc(img, opts.newUrl, opts.nextSprite);
         if (opts.prefix && opts.readyName) $(opts.prefix + '-name').textContent = opts.readyName;
         await waitMs(340);
       } else await waitMs(840);
@@ -588,7 +641,7 @@
       if (kind === 'mega' || (kind === 'dynamax' && normId(b.speciesId) !== normId(a.speciesId))) {
         transforms[side].newUrl = img.currentSrc || img.src;
         const oldUrl = spriteUrlForSnapshot(b, side);
-        if (oldUrl && oldUrl !== transforms[side].newUrl) swapSpriteSrc(img, oldUrl);
+        if (oldUrl && oldUrl !== transforms[side].newUrl) swapSpriteSrc(img, oldUrl, b);
         $(side === 0 ? 'p-name' : 'e-name').textContent = b.nameText || b.name;
       }
       if (kind === 'mega') img.classList.add('evo-silhouette');
@@ -598,8 +651,8 @@
       const t = transforms[side];
       if (t) {
         const at = delay, prefix = side === 0 ? 'p' : 'e';
-        if (t.kind === 'mega') { setTimeout(() => runTransformPhases(side, 'mega', { newUrl: t.newUrl, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 1500; }
-        else if (t.kind === 'dynamax') { setTimeout(() => runTransformPhases(side, 'dynamax', { gmax: t.a.dynamaxForm === 'gmax', newUrl: t.newUrl, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 980; }
+        if (t.kind === 'mega') { setTimeout(() => runTransformPhases(side, 'mega', { newUrl: t.newUrl, nextSprite: t.a, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 1500; }
+        else if (t.kind === 'dynamax') { setTimeout(() => runTransformPhases(side, 'dynamax', { gmax: t.a.dynamaxForm === 'gmax', newUrl: t.newUrl, nextSprite: t.a, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 980; }
         else if (t.kind === 'tera') { setTimeout(() => runTransformPhases(side, 'tera', { teraType: t.a.teraType }), at); delay += 980; }
       }
       if (before.active[side] !== afterSnap.active[side]) {
@@ -611,9 +664,9 @@
           const newUrl = img0.currentSrc || img0.src;
           const oldUrl = spriteUrlForSnapshot(oldMon, side);
           if (oldUrl && oldUrl !== newUrl) {
-            swapSpriteSrc(img0, oldUrl);
+            swapSpriteSrc(img0, oldUrl, oldMon);
             setTimeout(() => playRecall(side), at + 240);
-            setTimeout(() => { swapSpriteSrc(img0, newUrl); playSendOut(side); }, at + 1000);
+            setTimeout(() => { swapSpriteSrc(img0, newUrl, afterSnap.teams[side]?.[afterSnap.active[side]]); playSendOut(side); }, at + 1000);
           } else setTimeout(() => playSendOut(side), at);
         } else setTimeout(() => playSendOut(side), at);
       }
@@ -672,6 +725,192 @@
         if (a.status && a.status !== b.status) addFx(side, 'fx-status', PKMBattle.STATUS_NAMES[a.status] || '异常', 1200);
       }
     }, delay + 260);
+    return delay + 1560;
+  }
+
+  /* ---------- Action hierarchy / prototype world save ---------- */
+  function openCollection() {
+    renderCollection();
+    $('collection-section').open = true;
+    $('collection-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function showCommand(view) {
+    if (!battle || animating || (battle.pendingSwitch !== null && view !== 'switch')) return;
+    menuView = view;
+    if (view !== 'fight') selectedMechanic = null;
+    render();
+  }
+  function renderCommands() {
+    if (!battle) return;
+    const ended = battle.winner !== null && !animating;
+    if (battle.pendingSwitch !== null && !animating) menuView = 'switch';
+    if (ended) menuView = 'end';
+    const view = menuView;
+    for (const [id, value] of [['command-home','home'],['command-fight-panel','fight'],['command-switch-panel','switch'],['command-balls-panel','balls'],['command-end','end']]) $(id).hidden = view !== value;
+    $('command-title').textContent = animating ? '行动进行中…' : ended ? (battle.outcome === 'captured' ? '收服成功！' : '本场战斗已结束')
+      : battle.pendingSwitch !== null ? '请选择下一只出战宝可梦' : ({home: `${displayPokemonName(battle.cur(0))}，要做什么？`, fight: '选择本回合招式', switch: '选择出战宝可梦', balls: '选择精灵球'}[view]);
+    const isWild = battle.encounterType === 'wild';
+    $('encounter-tag').textContent = `${isWild ? '野生遭遇' : '训练家对战'} · 第 ${battle.turnCount + (ended ? 0 : 1)} 回合`;
+    $('encounter-tag').classList.toggle('wild', isWild);
+    $('command-back').hidden = view === 'home' || view === 'end' || battle.pendingSwitch !== null;
+    $('command-back').disabled = animating;
+    for (const id of ['command-fight','command-switch','command-balls']) $(id).disabled = animating || ended;
+    $('capture-availability').textContent = isWild ? '投出精灵球 / 捕获伙伴' : '训练家的宝可梦不可捕获';
+    $('command-balls').classList.toggle('capture-unavailable', !isWild);
+    $('command-status').textContent = commandMessage || (animating ? '请等待当前演出结束。' : view === 'home' ? '先选择行动，再决定招式、队友或精灵球。' : view === 'fight' ? '返回不消耗回合；选中招式后才开始行动。' : '');
+    if (ended) $('command-end-text').textContent = battle.outcome === 'captured'
+      ? `${displayPokemonName(battle.cur(1))} 已收入仓库${worldStore.error ? '（当前仅临时保存，请导出）' : '并保存到本机'}。可在仓库选择位置加入下场编队。`
+      : isWild ? '这次遭遇结束了。可以继续寻找新的野生宝可梦。' : '对战结束。也可以进入野生遭遇，收服新的伙伴。';
+    for (const id of ['btn-start','btn-wild','btn-next-wild','btn-config','sel-enemy','sel-diff','btn-supply','btn-import-save','btn-box','btn-end-box']) $(id).disabled = animating;
+    if (animating) document.querySelectorAll('#mechanics button, #moves button, #switches button, #ball-list button').forEach(b => { b.disabled = true; });
+    $('action-card').setAttribute('aria-busy', String(animating));
+  }
+  function renderBalls() {
+    const root = $('ball-list'); root.replaceChildren();
+    const reason = worldStore.blocked ? worldStore.error : worldStore.state.box.length >= 1000 ? '仓库已满，暂不能继续捕获。' : battle.captureReason();
+    $('capture-hint').textContent = reason || '原型规则：体力越低越容易捕获，异常状态也有加成。投球失败会消耗本回合。';
+    for (const ball of Object.values(PKMCapture.BALLS)) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'ball-choice'; button.dataset.ball = ball.id;
+      const mark = document.createElement('span'); mark.className = 'mini-ball ball-' + ball.id; mark.setAttribute('aria-hidden','true');
+      const body = document.createElement('span');
+      const title = document.createElement('strong'); title.textContent = ball.name;
+      const desc = document.createElement('small'); desc.textContent = ball.description;
+      const stock = document.createElement('b'); stock.textContent = `×${battle.ballStock[ball.id] || 0}`;
+      const odds = document.createElement('em'); odds.textContent = reason ? '不可捕获' : `约 ${Math.round(PKMCapture.chance(battle.cur(1), ball.id)*100)}% · 投出`;
+      body.append(title,desc); button.append(mark,body,stock,odds);
+      button.disabled = animating || !!reason || !!battle.captureReason(ball.id);
+      button.title = reason || battle.captureReason(ball.id) || '确认使用一枚' + ball.name;
+      button.onclick = () => captureAction(ball.id);
+      root.appendChild(button);
+    }
+  }
+  function unlockAfterAnimations(before, action, logStart) {
+    const ref = battle;
+    const duration = playTurnAnimations(before, action, logStart) || 1400;
+    setTimeout(() => {
+      if (battle !== ref) return;
+      animating = false; commandMessage = ''; menuView = battle.pendingSwitch !== null ? 'switch' : 'home'; after();
+    }, duration);
+  }
+  async function captureAction(ball) {
+    if (!battle || animating || worldStore.blocked || worldStore.state.box.length >= 1000) return;
+    battle.ballStock = { ...worldStore.state.balls };
+    const reason = battle.captureReason(ball);
+    if (reason) { commandMessage = reason; render(); return; }
+    const ref = battle, before = snapshotBattle(), logStart = battle.log.length;
+    const img = $('e-sprite').querySelector(':scope > img'), player = $('p-sprite').querySelector(':scope > img');
+    animating = true; commandMessage = '正在投出精灵球…'; renderCommands();
+    battle.turn({ kind: 'capture', ball });
+    const attempt = battle.lastCapture;
+    if (!attempt?.allowed) { animating = false; commandMessage = attempt?.reason || '暂时无法投球。'; render(); return; }
+    const record = attempt.success ? { id: `${encounterId}:${battle.turnCount}`, caughtAt: new Date().toISOString(), ball,
+      spec: battle.capture.spec, hpAtCapture: battle.capture.hpAtCapture, statusAtCapture: battle.capture.statusAtCapture } : null;
+    // Commit before the async animation: reload/double-click cannot repeat the reward.
+    worldStore.recordAttempt(battle.ballStock, record);
+    for (const id of Object.keys(PKMCapture.BALLS)) {
+      const count = document.querySelector(`[data-ball="${id}"] > b`);
+      if (count) count.textContent = `×${battle.ballStock[id]}`;
+    }
+    try {
+      if (img?.naturalWidth && player?.naturalWidth) {
+        const r = img.getBoundingClientRect();
+        const point = PKMSpriteAnchor.project({ rect:r, width:img.clientWidth, height:img.clientHeight,
+          naturalWidth:img.naturalWidth, naturalHeight:img.naturalHeight,
+          anchor:SPRITE_BODY[img.currentSrc || img.src], flip:parseFloat(getComputedStyle(img).getPropertyValue('--flip'))<0 });
+        await PKMCaptureFX.play({ arena:document.querySelector('.arena'), player, target:img, point:point || {x:r.left+r.width/2,y:r.top+r.height/2}, attempt,
+          name:displayPokemonName(ref.cur(1)), onPhase:text=>{ commandMessage=text; $('command-status').textContent=text; } });
+      } else await waitMs(600);
+    } catch (error) { console.warn('[PKM] capture animation fallback', error); }
+    if (battle !== ref) return;
+    selectedMechanic = null;
+    renderCollection();
+    if (attempt.success) {
+      animating = false; commandMessage = worldStore.error || ''; menuView = 'end'; after();
+    } else {
+      commandMessage = '没有抓住，野生宝可梦开始行动。'; after();
+      unlockAfterAnimations(before, { kind:'capture' }, logStart);
+    }
+  }
+  function renderCollection() {
+    if (!$('collection-list')) return;
+    $('box-count').textContent = $('collection-count').textContent = String(worldStore.state.box.length);
+    $('bag-summary').textContent = Object.values(PKMCapture.BALLS).map(b=>`${b.name} ×${worldStore.state.balls[b.id]}`).join(' · ');
+    $('save-warning').hidden = !worldStore.error; $('save-warning').textContent = worldStore.error;
+    const root = $('collection-list'); root.replaceChildren();
+    if (!worldStore.state.box.length) {
+      const empty = document.createElement('div'); empty.className = 'collection-empty';
+      empty.innerHTML = '<span class="mini-ball" aria-hidden="true"></span><h4>第一位新伙伴，等你相遇</h4><p>点击上方“野生遭遇”，在战斗中选择“精灵球”。捕获成功后会出现在这里。</p>';
+      root.appendChild(empty); return;
+    }
+    const team = $('editor-player')?.children.length ? readEditor('player') : [];
+    const newest = worldStore.state.box.slice().reverse();
+    for (const record of newest.slice(0, collectionLimit)) {
+      const card = document.createElement('article'); card.className = 'box-card'; card.dataset.captureId = record.id;
+      const art = document.createElement('div'); art.className = 'box-art';
+      const image = new Image(); image.alt = zhSpecies(record.spec.species, record.spec.species); image.loading = 'lazy';
+      image.src = SPRITES[record.spec.species]?.front || ''; image.onerror = () => { image.remove(); art.textContent = '？'; }; art.appendChild(image);
+      const content = document.createElement('div'); content.className='box-info';
+      const title = document.createElement('h4'); title.textContent = record.spec.nickname || zhSpecies(record.spec.species,record.spec.species);
+      const sub = document.createElement('p'); sub.textContent = `等级 ${record.spec.level} · ${PKMCapture.BALLS[record.ball]?.name || '捕获记录'}`;
+      const moves = document.createElement('small'); moves.textContent = record.spec.moves.map(id=>zhMove(id,id)).join(' / ');
+      const actions = document.createElement('div'); actions.className='box-actions';
+      const select = document.createElement('select'); select.setAttribute('aria-label','选择加入的队伍位置');
+      const placeholder = document.createElement('option'); placeholder.value=''; placeholder.textContent='选择队伍位置'; select.appendChild(placeholder);
+      for (let i=0;i<Math.min(6,team.length+1);i++) { const o=document.createElement('option'); o.value=String(i); o.textContent=`#${i+1} ${team[i] ? zhSpecies(team[i].species,team[i].species) : '空位'}`; select.appendChild(o); }
+      const add = document.createElement('button'); add.type='button'; add.textContent='加入编队'; add.disabled=true;
+      select.onchange=()=>{add.disabled=select.value==='';};
+      add.onclick=()=>{
+        if (animating) { $('collection-message').textContent='请等待当前行动结束再调整编队。'; return; }
+        const index=Number(select.value), specs=readEditor('player');
+        if (select.value==='' || index<0 || index>5 || index>specs.length) return;
+        if (specs[index] && !confirm(`替换编队第${index+1}位的${zhSpecies(specs[index].species,specs[index].species)}？仅下场对战生效，捕获记录仍保留在仓库。`)) return;
+        const spec=JSON.parse(JSON.stringify(record.spec)); spec.captureId = record.id;
+        spec.ability=PKMBattle._dex[spec.species]?.abilities?.find(a=>normId(a)===normId(spec.ability)) || spec.ability;
+        specs[index]=spec; renderEditor('player',specs); $('chk-custom-player').checked=true;
+        const saved=saveEditorSpecs(false); showValidate('捕获伙伴已加入编队，下场对战生效。');
+        $('collection-message').textContent=saved ? `已把${title.textContent}加入第${index+1}位，下一场开始时使用；仓库保留捕获记录。` : '已修改本页编队，但写入本机失败；请勿关闭页面。';
+        renderCollection();
+      };
+      actions.append(select,add); content.append(title,sub,moves,actions); card.append(art,content); root.appendChild(card);
+    }
+    if (newest.length>collectionLimit) {const more=document.createElement('button');more.type='button';more.textContent=`加载更多（共${newest.length}只）`;more.onclick=()=>{collectionLimit+=48;renderCollection();};root.appendChild(more);}
+  }
+  function beginWild() {
+    if (animating) return;
+    $('sel-enemy').value='wild'; $('chk-custom-enemy').checked=false;
+    startBattle(null);
+    document.querySelector('.battle-screen').scrollIntoView({ behavior:'smooth',block:'start' });
+  }
+  function initWorldControls() {
+    $('command-fight').onclick=()=>showCommand('fight'); $('command-switch').onclick=()=>showCommand('switch');
+    $('command-balls').onclick=()=>showCommand('balls'); $('command-back').onclick=()=>showCommand('home');
+    for(const id of ['btn-box','btn-end-box']) $(id).onclick=openCollection;
+    for(const id of ['btn-wild','btn-next-wild']) $(id).onclick=beginWild;
+    $('btn-supply').onclick=()=>{
+      if(animating || worldStore.blocked) return;
+      if(!confirm('领取原型测试补给？球袋补至精灵球20、超级球10、高级球5，仓库不会清空。'))return;
+      worldStore.supply(); if(battle)battle.ballStock={...worldStore.state.balls}; renderCollection(); if(battle)render();
+    };
+    $('btn-export-save').onclick=()=>{
+      let text=JSON.stringify(worldStore.state,null,2);
+      if(worldStore.blocked){try{text=worldStore.storage.getItem(PKMWorldSave.KEY)||text;}catch(_) {}}
+      const blob=new Blob([text],{type:'application/json;charset=utf-8'}), url=URL.createObjectURL(blob), link=document.createElement('a');
+      link.href=url;link.download=worldStore.blocked?'pokemon-world-原始存档备份.json':'pokemon-world-save.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    };
+    $('btn-import-save').onclick=()=>{if(!animating)$('file-import-save').click();};
+    $('file-import-save').onchange=async()=>{
+      const file=$('file-import-save').files[0];$('file-import-save').value='';if(!file)return;
+      try {
+        if(file.size>3*1024*1024)throw new Error('存档文件过大。');
+        const imported=PKMWorldSave.validate(JSON.parse(await file.text()));
+        for(const record of imported.box)if(!PKMBattle._dex[record.spec.species] || record.spec.moves.some(id=>!PKMBattle._moves[id]))throw new Error('存档包含当前版本不认识的物种或招式。');
+        if(animating)throw new Error('请等当前行动结束后再导入。');
+        if(!confirm(`导入将替换当前球袋和仓库（${imported.box.length}只）。不会替换编辑队伍。确定继续？`))return;
+        worldStore.import(imported);if(battle)battle.ballStock={...worldStore.state.balls};renderCollection();if(battle)render();
+        $('collection-message').textContent=worldStore.error || '存档已导入。';
+      }catch(e){$('collection-message').textContent='导入失败：'+e.message;}
+    };
+    renderCollection();
   }
 
   function render() {
@@ -682,6 +921,7 @@
       const ab = PKMMechanics.abilityInfo(p.ability);
       const it = p.item ? PKMMechanics.itemInfo(p.item) : null;
       const badges = [];
+      if (p.captured) badges.push('已收服');
       if (p.isMega) badges.push('超级进化');
       if (p.terastallized) badges.push(`太晶·${zhType(p.teraType)}`);
       if (p.dynamaxed) badges.push(`${p.dynamaxForm === 'gmax' ? '超极巨' : '极巨'}·${p.dynamaxTurns}回合`);
@@ -697,6 +937,7 @@
     fill(me, 'p'); fill(foe, 'e');
     setSprite($('p-sprite'), me, true);
     setSprite($('e-sprite'), foe, false);
+    $('e-sprite').classList.toggle('is-captured', battle.outcome === 'captured');
     const teamRow = (side, el) => {
       el.innerHTML = '';
       battle.teams[side].forEach((p, i) => {
@@ -739,7 +980,7 @@
       b.type = 'button';
       b.className = 'mechanic-btn' + (selectedMechanic === me.mechanic ? ' active' : '');
       const zReady = me.mechanic !== 'z' || me.moves.some(m => m.type === me.zType);
-      b.disabled = over || battle.pendingSwitch !== null || !zReady;
+      b.disabled = over || animating || battle.pendingSwitch !== null || !zReady;
       b.textContent = (selectedMechanic === me.mechanic ? '已选 · ' : '') + mechanicLabels[me.mechanic] + (me.mechanic === 'z' ? `（${zhType(me.zType)}）` : me.mechanic === 'tera' ? `（${zhType(me.teraType)}）` : '');
       b.title = '点击后，再选择本回合招式；再次点击可取消';
       b.onclick = () => { selectedMechanic = selectedMechanic === me.mechanic ? null : me.mechanic; render(); };
@@ -753,7 +994,7 @@
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `move-btn type-${String(shown.type || '').toLowerCase()}`;
-      b.disabled = over || battle.pendingSwitch !== null || m.ppLeft <= 0 || (me.choiceLockedMove && me.choiceLockedMove !== m.id) || me.volatile.disableMove === m.id || (selectedMechanic === 'z' && m.type !== me.zType);
+      b.disabled = over || animating || battle.pendingSwitch !== null || m.ppLeft <= 0 || (me.choiceLockedMove && me.choiceLockedMove !== m.id) || me.volatile.disableMove === m.id || (selectedMechanic === 'z' && m.type !== me.zType);
       b.innerHTML = `${displayMoveName(shown, m)}<small>${zhType(shown.type)} · ${zhCat(shown.category)}${shown.basePower ? ' · 威力 ' + shown.basePower : ''} · 招式点数 ${m.ppLeft}/${m.pp}</small>`;
       b.onclick = () => act({ kind: 'move', index: i, mechanic: selectedMechanic });
       moves.appendChild(b);
@@ -761,17 +1002,20 @@
     const sw = $('switches');
     sw.innerHTML = '';
     battle.teams[0].forEach((p, i) => {
-      if (i === battle.active[0] || p.fainted) return;
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'switch-btn';
-      b.textContent = displayPokemonName(p);
+      const title = document.createElement('strong'); title.textContent = displayPokemonName(p);
+      const detail = document.createElement('small'); detail.textContent = i === battle.active[0] ? `出战中 · ${p.hp}/${p.maxHp}` : p.fainted ? '失去战斗能力' : `等级 ${p.level} · 体力 ${p.hp}/${p.maxHp}`;
+      const dot = document.createElement('span'); dot.className = 'party-dot' + (p.fainted ? ' down' : i === battle.active[0] ? ' active' : '');
+      const label = document.createElement('span'); label.append(title,detail); b.append(dot,label);
       b.title = `换上${displayPokemonName(p)}，体力 ${p.hp}/${p.maxHp}`;
-      b.disabled = over;
+      b.disabled = over || animating || i === battle.active[0] || p.fainted;
       b.onclick = () => {
+        if (animating) return;
         if (battle.pendingSwitch !== null) {
           const before = snapshotBattle(), logStart = battle.log.length;
-          if (battle.forceSwitch(i)) { after(); requestAnimationFrame(() => playTurnAnimations(before, { kind: 'switch' }, logStart)); }
+          if (battle.forceSwitch(i)) { animating = true; commandMessage = ''; menuView = 'home'; after(); requestAnimationFrame(() => unlockAfterAnimations(before, { kind: 'switch' }, logStart)); }
         }
         else act({ kind: 'switch', index: i });
       };
@@ -780,22 +1024,25 @@
     const res = $('result');
     if (over) {
       res.classList.remove('hidden');
-      res.textContent = battle.winner === 0 ? '🏆 胜利！' : '💀 败北……';
+      res.textContent = battle.outcome === 'captured' ? '收服成功！' : battle.winner === 0 ? '🏆 胜利！' : '💀 败北……';
     } else if (battle.pendingSwitch !== null) {
       res.classList.remove('hidden');
       res.textContent = '请选择下一只宝可梦出战';
     } else res.classList.add('hidden');
+    renderBalls(); renderCommands();
   }
 
   function announceResult() {
-    if (!battle || battle.winner === null) return;
+    if (!battle || battle.winner === null || animating || announcedBattle === battle) return;
+    announcedBattle = battle;
     const payload = battle.result();
     try { window.parent?.postMessage({ type: 'PKM_BATTLE_RESULT', payload }, '*'); } catch (_) {}
     try { window.top?.postMessage({ type: 'PKM_BATTLE_RESULT', payload }, '*'); } catch (_) {}
   }
   function after() { render(); announceResult(); }
   function act(a) {
-    if (!battle || animating) return;
+    if (!battle || animating || battle.winner !== null || battle.pendingSwitch !== null) return;
+    animating = true; commandMessage = ''; renderCommands();
     const battleRef = battle;
     const before = snapshotBattle();
     const logStart = battle.log.length;
@@ -812,9 +1059,9 @@
     const finishTurn = () => {
       if (battle !== battleRef) return;
       battle.turn(a);
-      selectedMechanic = null;
+      selectedMechanic = null; menuView = 'home';
       after();
-      requestAnimationFrame(() => playTurnAnimations(before, chosen, logStart));
+      requestAnimationFrame(() => unlockAfterAnimations(before, chosen, logStart));
     };
     // 玩家变身：先在当前精灵上播完变身动画，再结算回合（顺序与参考卡一致）
     const meP = battle.cur(0);
@@ -829,14 +1076,14 @@
       const newUrl = newSpeciesId
         ? spriteUrlForSnapshot({ speciesId: newSpeciesId, originalSpeciesId: meP.originalSpeciesId, rawName: PKMBattle._dex?.[normId(newSpeciesId)]?.name || newSpeciesId }, 0)
         : '';
-      runTransformPhases(0, mech, { newUrl, gmax: meP.dynamaxForm === 'gmax', teraType: meP.teraType })
+      runTransformPhases(0, mech, { newUrl, nextSprite: { ...meP, speciesId: newSpeciesId || meP.speciesId, isMega: mech === 'mega' || meP.isMega, dynamaxed: mech === 'dynamax' || meP.dynamaxed }, gmax: meP.dynamaxForm === 'gmax', teraType: meP.teraType })
         .catch(() => {})
-        .finally(() => { animating = false; finishTurn(); });
+        .finally(() => { finishTurn(); });
     } else if (a.kind === 'switch' && meP && !meP.fainted && battle.pendingSwitch === null) {
       // 主动换人：先把当前宝可梦收回精灵球，再执行换人
       animating = true;
       playRecall(0);
-      setTimeout(() => { animating = false; finishTurn(); }, 700);
+      setTimeout(() => { finishTurn(); }, 700);
     } else finishTurn();
   }
 
@@ -858,11 +1105,15 @@
   }
 
   function startBattle(cfg) {
+    if (animating) return;
+    menuView = 'home'; commandMessage = ''; announcedBattle = null;
+    encounterId = globalThis.crypto?.randomUUID?.() || `encounter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     selectedMechanic = null;
     animating = false;
     let playerTeam, enemyTeam, difficulty = $('sel-diff').value, weather = null;
     if (cfg) {
       difficulty = cfg.difficulty || difficulty;
+      if (cfg.encounter?.type === 'wild') $('sel-enemy').value = 'wild';
       const resolveSide = (side, fallbackKey) => {
         const entrants = side?.entrants?.length ? side.entrants : [{ name: fallbackKey }];
         const team = [];
@@ -884,13 +1135,21 @@
       enemyTeam = resolveSide(cfg.p2, $('sel-enemy').value);
       if (cfg.environment?.weather) weather = cfg.environment.weather === 'clear' ? null : cfg.environment.weather;
       if (cfg.environment?.weatherTurns) var wt = cfg.environment.weatherTurns;
-      battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, weather, weatherTurns: typeof wt !== 'undefined' ? wt : 0 });
+      if (cfg.encounter?.type === 'wild' && enemyTeam.length !== 1) throw new Error('当前野生遭遇仅支持一只野生宝可梦。');
+      battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, weather, weatherTurns: typeof wt !== 'undefined' ? wt : 0,
+        encounterType: cfg.encounter?.type, balls: worldStore.state.balls, seed: cfg.seed });
     } else {
       playerTeam = $('chk-custom-player').checked ? buildValidated(readEditor('player'), '我方') : buildFromPreset(PKMPresets.TRAINERS.player);
       if (!playerTeam) return;
       enemyTeam = $('chk-custom-enemy').checked ? buildValidated(readEditor('enemy'), '敌方') : buildFromPreset(PKMPresets.TRAINERS[$('sel-enemy').value]);
       if (!enemyTeam) return;
-      battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty });
+      const isWild = $('sel-enemy').value === 'wild' && !$('chk-custom-enemy').checked;
+      if (isWild) {
+        const pool = ['pikachu','eevee','growlithe','psyduck','vulpix','oddish','zubat','geodude','riolu'];
+        const id = pool[Math.floor(Math.random()*pool.length)], level = 30 + Math.floor(Math.random()*16);
+        enemyTeam = [PKMBattle.createPokemon(id, level, autoMoves(id, level))];
+      }
+      battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, encounterType: isWild ? 'wild' : 'trainer', balls: worldStore.state.balls });
     }
     after();
     requestAnimationFrame(() => { playSendOut(1); setTimeout(() => playSendOut(0), 150); });
@@ -920,7 +1179,7 @@
     return { player: specFromPreset('player'), enemy: specFromPreset('gym') };
   }
   function saveEditorSpecs(show) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ player: readEditor('player'), enemy: readEditor('enemy') })); if (show) showValidate('已保存到本机浏览器。'); } catch (e) { if (show) alert('保存失败：' + e.message); }
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ player: readEditor('player'), enemy: readEditor('enemy') })); if (show) showValidate('已保存到本机浏览器。'); return true; } catch (e) { if (show) alert('保存失败：' + e.message); return false; }
   }
   function refreshMechanicOptions(row) {
     const sid = resolveSpeciesId(row.querySelector('.f-species').value);
@@ -983,6 +1242,7 @@
     specs.slice(0, 6).forEach((spec, i) => {
       const row = document.createElement('fieldset');
       row.className = 'team-row';
+      row._ownedMetadata = { sourceSpecies: resolveSpeciesId(spec.species), ivs: spec.ivs, nickname: spec.nickname, shiny: spec.shiny, gender: spec.gender, captureId: spec.captureId };
       row.innerHTML = `<legend>#${i + 1}</legend>
         <div class="row-main">
           <input class="f-species" list="species-list" placeholder="输入名称，如：皮卡丘">
@@ -1032,7 +1292,7 @@
       if (!moves.length) moves = PKMTeam.chooseAutoMoves(sid, level);
       const mechanic = row.querySelector('.f-mechanic').value;
       const detail = row.querySelector('.f-mechanic-detail').value;
-      specs.push({ species: sid, level, nature: row.querySelector('.f-nature').value, ability: row.querySelector('.f-ability').value, item: row.querySelector('.f-item').value, mechanic, megaForm: mechanic === 'mega' ? detail : '', zType: mechanic === 'z' ? detail : '', teraType: mechanic === 'tera' ? detail : '', dynamaxForm: mechanic === 'dynamax' ? detail : '', moves });
+      specs.push({ ...(row._ownedMetadata?.sourceSpecies === sid ? { ivs: row._ownedMetadata.ivs, nickname: row._ownedMetadata.nickname, shiny: row._ownedMetadata.shiny, gender: row._ownedMetadata.gender, captureId: row._ownedMetadata.captureId } : {}), species: sid, level, nature: row.querySelector('.f-nature').value, ability: row.querySelector('.f-ability').value, item: row.querySelector('.f-item').value, mechanic, megaForm: mechanic === 'mega' ? detail : '', zType: mechanic === 'z' ? detail : '', teraType: mechanic === 'tera' ? detail : '', dynamaxForm: mechanic === 'dynamax' ? detail : '', moves });
     });
     return specs;
   }
@@ -1077,19 +1337,20 @@
 
   async function init() {
     const [dex, moves, learnsets, zh, spriteMap] = await Promise.all([
-      fetch('./src/data/pokedex.json?v=0.8.4').then(r => r.json()),
-      fetch('./src/data/moves.json?v=0.8.4').then(r => r.json()),
-      fetch('./src/data/learnsets.json?v=0.8.4').then(r => r.json()),
-      fetch('./src/data/zh-names.json?v=0.8.4').then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('./src/data/sprite-map.json?v=0.8.4').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/pokedex.json?v=0.9.0').then(r => r.json()),
+      fetch('./src/data/moves.json?v=0.9.0').then(r => r.json()),
+      fetch('./src/data/learnsets.json?v=0.9.0').then(r => r.json()),
+      fetch('./src/data/zh-names.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/sprite-map.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
     ]);
     ZH = zh || {};
     SPRITES = spriteMap?.entries || {};
     SPRITE_FEET = {};
     SPRITE_FEETX = {};
+    SPRITE_BODY = {};
     for (const e of Object.values(SPRITES)) {
-      if (e.front) { SPRITE_FEET[e.front] = e.frontFeet; SPRITE_FEETX[e.front] = e.frontFeetX; }
-      if (e.back) { SPRITE_FEET[e.back] = e.backFeet; SPRITE_FEETX[e.back] = e.backFeetX; }
+      if (e.front) { SPRITE_FEET[e.front] = e.frontFeet; SPRITE_FEETX[e.front] = e.frontFeetX; SPRITE_BODY[e.front] = e.frontBody; }
+      if (e.back) { SPRITE_FEET[e.back] = e.backFeet; SPRITE_FEETX[e.back] = e.backFeetX; SPRITE_BODY[e.back] = e.backBody; }
     }
     PKMBattle.setData(dex, moves);
     PKMTeam.setData(dex, moves, learnsets);
@@ -1107,6 +1368,7 @@
     $('btn-validate').onclick = () => showValidate('');
     $('btn-random-player').onclick = () => { renderEditor('player', randomSpec()); saveEditorSpecs(false); showValidate('已随机生成我方队伍。'); };
     $('btn-reset-teams').onclick = () => { renderEditor('player', specFromPreset('player')); renderEditor('enemy', specFromPreset('gym')); saveEditorSpecs(false); showValidate('已恢复内置队伍。'); };
+    initWorldControls();
     $('btn-start').onclick = () => startBattle(null);
     $('btn-config').onclick = () => {
       try {
@@ -1115,6 +1377,7 @@
       } catch (e) { alert('配置解析失败：' + e.message); }
     };
     // URL config: ?config=<encodeURIComponent(JSON)>
+    for (const id of ['p-sprite', 'e-sprite']) spriteResizeObserver?.observe($(id));
     const q = new URLSearchParams(location.search).get('config');
     if (q) { try { startBattle(JSON.parse(q)); return; } catch (_) {} }
     startBattle(null);
