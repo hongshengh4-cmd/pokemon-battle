@@ -71,6 +71,25 @@
     </div>
   </div>
 
+  <details style="margin-top:14px" open>
+    <summary><b>队伍编辑器（合法配招）</b></summary>
+    <p class="note">招式下拉只会列出该宝可梦在现行世代（Gen 9）学习面内的合法招式（含升级、招式学习器、蛋招式，并已合并进化前形态）。编辑会自动保存在本机浏览器中；勾选后点上方“开始新战斗”即按编辑队伍开战。数据集暂无学习面的物种会被标记为“未校验”，仍可游玩。</p>
+    <div class="controls" style="margin-bottom:8px">
+      <button id="btn-validate" class="blue" type="button">校验两队</button>
+      <button id="btn-save-teams" type="button">保存编辑</button>
+      <button id="btn-random-player" type="button">随机我方队伍</button>
+      <button id="btn-reset-teams" type="button">恢复内置队伍</button>
+      <label><input type="checkbox" id="chk-custom-player" checked> 使用我方编辑队伍</label>
+      <label><input type="checkbox" id="chk-custom-enemy"> 使用敌方编辑队伍</label>
+    </div>
+    <div id="validate-msg" class="note" style="margin-bottom:8px"></div>
+    <div class="grid2">
+      <div><h3 style="margin:4px 0 8px">我方队伍</h3><div id="editor-player"></div></div>
+      <div><h3 style="margin:4px 0 8px">敌方队伍</h3><div id="editor-enemy"></div></div>
+    </div>
+    <datalist id="species-list"></datalist>
+  </details>
+
   <details style="margin-top:14px">
     <summary><b>高级：粘贴战斗配置（与酒馆卡协议兼容）</b></summary>
     <p class="note">把 AI 输出的 <span class="kbd">&lt;PKM_BATTLE&gt;{...}&lt;/PKM_BATTLE&gt;</span> 或纯 JSON 粘进来，即可按配置开战（支持 p1/p2、entrants、party 现场构造）。也可以由酒馆宿主页面通过 <span class="kbd">postMessage</span> 发送 <span class="kbd">{type:"PKM_BATTLE_CONFIG", payload:{...}}</span>，战斗结束后本页会回发 <span class="kbd">{type:"PKM_BATTLE_RESULT", payload:{...}}</span>。</p>
@@ -81,6 +100,7 @@
 
 <script src="./src/engine/typechart.js"></script>
 <script src="./src/engine/battle.js"></script>
+<script src="./src/engine/team.js"></script>
 <script src="./src/data/presets.js"></script>
 <script src="./src/ui/app.js"></script>
 </body>

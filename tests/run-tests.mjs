@@ -6,14 +6,18 @@ const root = new URL('../', import.meta.url);
 const load = async p => JSON.parse(await readFile(new URL(p, root), 'utf8'));
 const dex = await load('src/data/pokedex.json');
 const moves = await load('src/data/moves.json');
+const learnsets = await load('src/data/learnsets.json');
 
 const ctx = { console, Math, JSON, Object, Array, Number, String, Boolean, Promise, Error, TypeError, Set, Map };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(await readFile(new URL('src/engine/typechart.js', root), 'utf8'), ctx);
 vm.runInContext(await readFile(new URL('src/engine/battle.js', root), 'utf8'), ctx);
-const E = ctx.PKMBattle, T = ctx.PKMTypeChart;
+vm.runInContext(await readFile(new URL('src/engine/team.js', root), 'utf8'), ctx);
+vm.runInContext(await readFile(new URL('src/data/presets.js', root), 'utf8'), ctx);
+const E = ctx.PKMBattle, T = ctx.PKMTypeChart, TEAM = ctx.PKMTeam, PRESETS = ctx.PKMPresets;
 E.setData(dex, moves);
+TEAM.setData(dex, moves, learnsets);
 
 let pass = 0, fail = 0;
 const check = (label, cond, extra = '') => { if (cond) { pass++; console.log('✓', label, extra); } else { fail++; console.log('✗ FAIL', label, extra); } };
@@ -78,6 +82,23 @@ check('未知物种报错', threw);
 threw = false;
 try { E.createPokemon('pikachu', 5, ['notarealmove']); } catch (e) { threw = /Unknown move/.test(e.message); }
 check('未知招式报错', threw);
+
+
+// Phase 2: learnset legality + preset validation
+check('第九代学习面覆盖超过1000物种', Object.keys(learnsets).length > 1000, 'got ' + Object.keys(learnsets).length);
+check('皮卡丘十万伏特合法', TEAM.isLegalMove('pikachu', 'thunderbolt', 50) === true);
+check('皮卡丘飞叶风暴非法', TEAM.isLegalMove('pikachu', 'leafstorm', 100) === false);
+check('皮卡丘低等级未学升级招式非法', TEAM.isLegalMove('pikachu', 'discharge', 20) === false);
+const autoPika = TEAM.chooseAutoMoves('pikachu', 50);
+check('自动配招均合法', autoPika.length === 4 && autoPika.every(m => TEAM.isLegalMove('pikachu', m, 50)), autoPika.join(','));
+const presetIssues = [];
+for (const [key, trainer] of Object.entries(PRESETS.TRAINERS)) {
+  const v = TEAM.validateTeam(trainer.party);
+  if (!v.ok) presetIssues.push(key + ': ' + v.errors.join('；'));
+}
+check('全部预设队伍招式合法（无学习面物种仅警示）', presetIssues.length === 0, presetIssues.join(' | '));
+const badTeam = TEAM.validateTeam([{ species: 'pikachu', level: 50, moves: ['leafstorm'] }]);
+check('非法招式整队校验报错', badTeam.ok === false && badTeam.errors.length > 0, badTeam.errors.join('；'));
 
 console.log(`\nTOTAL pass=${pass} fail=${fail}`);
 process.exit(fail ? 1 : 0);

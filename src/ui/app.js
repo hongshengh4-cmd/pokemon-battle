@@ -104,29 +104,7 @@
     });
   }
   function autoMoves(speciesId, level) {
-    // Phase 1 heuristic: STAB + strong coverage picks from full move DB.
-    // Legal learnset filtering arrives with the Phase 2 data pipeline.
-    const dex = PKMBattle._dex, moves = PKMBattle._moves;
-    const sp = dex[normId(speciesId)];
-    if (!sp) return [];
-    const phys = sp.baseStats.atk >= sp.baseStats.spa;
-    const candidates = Object.entries(moves)
-      .filter(([, m]) => m.basePower >= 60 && m.category !== 'Status' && (m.accuracy === true || (m.accuracy ?? 100) >= 80))
-      .map(([id, m]) => {
-        let score = m.basePower * ((m.accuracy === true ? 100 : m.accuracy) / 100);
-        if (sp.types.includes(m.type)) score *= 1.6;
-        if ((m.category === 'Physical') === phys) score *= 1.25;
-        return { id, score };
-      })
-      .sort((a, b) => b.score - a.score);
-    const picked = [], usedTypes = new Set();
-    for (const c of candidates) {
-      const t = moves[c.id].type;
-      if (usedTypes.has(t) && picked.length < 3) continue;
-      usedTypes.add(t); picked.push(c.id);
-      if (picked.length >= 4) break;
-    }
-    return picked;
+    return PKMTeam.chooseAutoMoves(speciesId, level || 50);
   }
 
   function startBattle(cfg) {
@@ -156,20 +134,170 @@
       if (cfg.environment?.weatherTurns) var wt = cfg.environment.weatherTurns;
       battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, weather, weatherTurns: typeof wt !== 'undefined' ? wt : 0 });
     } else {
-      playerTeam = buildFromPreset(PKMPresets.TRAINERS.player);
-      enemyTeam = buildFromPreset(PKMPresets.TRAINERS[$('sel-enemy').value]);
+      playerTeam = $('chk-custom-player').checked ? buildValidated(readEditor('player'), '我方') : buildFromPreset(PKMPresets.TRAINERS.player);
+      if (!playerTeam) return;
+      enemyTeam = $('chk-custom-enemy').checked ? buildValidated(readEditor('enemy'), '敌方') : buildFromPreset(PKMPresets.TRAINERS[$('sel-enemy').value]);
+      if (!enemyTeam) return;
       battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty });
     }
     after();
   }
 
+
+  /* ---------- Team editor (Phase 2) ---------- */
+  const NATURES = ['', 'adamant', 'modest', 'jolly', 'timid', 'bold', 'calm', 'impish', 'careful', 'brave', 'quiet', 'relaxed', 'sassy', 'lonely', 'mild', 'hasty', 'naive', 'naughty', 'rash', 'lax', 'gentle'];
+  const LS_KEY = 'pkm-custom-teams-v2';
+  function resolveSpeciesId(text) {
+    const n = normId(text);
+    if (PKMBattle._dex[n]) return n;
+    for (const [id, sp] of Object.entries(PKMBattle._dex)) if (normId(sp.name) === n) return id;
+    return n;
+  }
+  function editorRoot(side) { return side === 'player' ? $('editor-player') : $('editor-enemy'); }
+  function specFromPreset(key) {
+    return PKMPresets.TRAINERS[key].party.map(p => ({ species: p.species, level: p.level, nature: '', ability: '', moves: p.moves.slice() }));
+  }
+  function loadEditorSpecs() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (saved && Array.isArray(saved.player) && Array.isArray(saved.enemy)) return saved;
+    } catch (_) {}
+    return { player: specFromPreset('player'), enemy: specFromPreset('gym') };
+  }
+  function saveEditorSpecs(show) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ player: readEditor('player'), enemy: readEditor('enemy') })); if (show) showValidate('已保存到本机浏览器。'); } catch (e) { if (show) alert('保存失败：' + e.message); }
+  }
+  function refreshRowOptions(row) {
+    const sid = resolveSpeciesId(row.querySelector('.f-species').value);
+    const dex = PKMBattle._dex[sid];
+    const level = parseInt(row.querySelector('.f-level').value || '50', 10) || 50;
+    const abilitySel = row.querySelector('.f-ability');
+    const prevAbility = abilitySel.value || abilitySel.dataset.want || '';
+    abilitySel.innerHTML = '';
+    (dex?.abilities || []).forEach(a => { const o = document.createElement('option'); o.value = a; o.textContent = a; abilitySel.appendChild(o); });
+    if (prevAbility && dex?.abilities?.includes(prevAbility)) abilitySel.value = prevAbility;
+    const legal = dex ? PKMTeam.legalMoves(sid, level) : [];
+    row.querySelectorAll('.f-move').forEach(sel => {
+      const prev = sel.value || sel.dataset.want || '';
+      sel.innerHTML = '';
+      const blank = document.createElement('option'); blank.value = ''; blank.textContent = '（自动配招）'; sel.appendChild(blank);
+      for (const m of legal) {
+        const o = document.createElement('option');
+        o.value = m.id;
+        o.textContent = `${m.name} · ${m.type}/${m.category}${m.basePower ? ' ' + m.basePower : ''}（${m.learn.viaLabel}）`;
+        sel.appendChild(o);
+      }
+      if (prev) {
+        if (![...sel.options].some(o => o.value === prev)) {
+          const o = document.createElement('option'); o.value = prev; o.textContent = (PKMBattle._moves[prev]?.name || prev) + '（当前等级未学会/不合法）'; sel.appendChild(o);
+        }
+        sel.value = prev;
+      }
+    });
+    row.querySelector('.f-note').textContent = dex
+      ? (PKMTeam.hasLearnset(sid) ? `${dex.name} · ${dex.types.join('/')} · 合法招式 ${legal.length} 个` : `${dex.name} · 数据集暂无现行学习面（未校验）`)
+      : '物种不存在';
+  }
+  function renderEditor(side, specs) {
+    const rootEl = editorRoot(side);
+    rootEl.innerHTML = '';
+    specs.slice(0, 6).forEach((spec, i) => {
+      const row = document.createElement('fieldset');
+      row.className = 'team-row';
+      row.style.cssText = 'border:2px solid #222;border-radius:10px;margin:0 0 8px;padding:8px;background:#fff';
+      row.innerHTML = `<legend style="font-weight:700">#${i + 1}</legend>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <input class="f-species" list="species-list" placeholder="物种（如 pikachu）" style="width:150px">
+          <input class="f-level" type="number" min="1" max="100" style="width:72px" title="等级">
+          <select class="f-nature" title="性格">${NATURES.map(n => `<option value="${n}">${n || '性格：无修正'}</option>`).join('')}</select>
+          <select class="f-ability" title="特性"></select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+          ${[0, 1, 2, 3].map(() => `<select class="f-move"></select>`).join('')}
+        </div>
+        <div class="f-note note"></div>`;
+      rootEl.appendChild(row);
+      row.querySelector('.f-species').value = spec.species || '';
+      row.querySelector('.f-level').value = spec.level || 50;
+      row.querySelector('.f-nature').value = spec.nature || '';
+      row.querySelector('.f-ability').dataset.want = spec.ability || '';
+      row.querySelectorAll('.f-move').forEach((sel, k) => { sel.dataset.want = (spec.moves || [])[k] || ''; });
+      refreshRowOptions(row);
+      row.querySelector('.f-species').addEventListener('change', () => {
+        refreshRowOptions(row);
+        const sid = resolveSpeciesId(row.querySelector('.f-species').value);
+        const auto = PKMTeam.chooseAutoMoves(sid, parseInt(row.querySelector('.f-level').value || '50', 10) || 50);
+        row.querySelectorAll('.f-move').forEach((sel, k) => { sel.dataset.want = auto[k] || ''; sel.value = auto[k] || ''; });
+        saveEditorSpecs(false);
+      });
+      row.querySelector('.f-level').addEventListener('change', () => { refreshRowOptions(row); saveEditorSpecs(false); });
+      row.addEventListener('change', () => saveEditorSpecs(false));
+    });
+  }
+  function readEditor(side) {
+    const specs = [];
+    editorRoot(side).querySelectorAll('.team-row').forEach(row => {
+      const speciesText = row.querySelector('.f-species').value.trim();
+      if (!speciesText) return;
+      const sid = resolveSpeciesId(speciesText);
+      const level = parseInt(row.querySelector('.f-level').value || '50', 10) || 50;
+      let moves = [...row.querySelectorAll('.f-move')].map(sel => sel.value).filter(Boolean);
+      if (!moves.length) moves = PKMTeam.chooseAutoMoves(sid, level);
+      specs.push({ species: sid, level, nature: row.querySelector('.f-nature').value, ability: row.querySelector('.f-ability').value, moves });
+    });
+    return specs;
+  }
+  function buildValidated(spec, label) {
+    const v = PKMTeam.validateTeam(spec);
+    showValidate((v.errors.length ? `${label}错误：\n` + v.errors.join('\n') : '') + (v.warnings.length ? `\n${label}提示：\n` + v.warnings.join('\n') : ''));
+    if (!v.ok) { alert(label + '队伍有问题：\n' + v.errors.join('\n')); return null; }
+    return spec.map(p => PKMBattle.createPokemon(p.species, p.level, p.moves, p));
+  }
+  function showValidate(extra) {
+    const pv = PKMTeam.validateTeam(readEditor('player')), ev = PKMTeam.validateTeam(readEditor('enemy'));
+    const lines = [];
+    if (extra) lines.push(extra);
+    lines.push(pv.ok ? '我方队伍：合法 ✓' : '我方队伍错误：\n' + pv.errors.join('\n'));
+    lines.push(ev.ok ? '敌方队伍：合法 ✓' : '敌方队伍错误：\n' + ev.errors.join('\n'));
+    for (const w of [...pv.warnings, ...ev.warnings]) lines.push('提示：' + w);
+    $('validate-msg').textContent = lines.join('\n');
+    $('validate-msg').style.whiteSpace = 'pre-wrap';
+  }
+  function randomSpec() {
+    const pool = Object.entries(PKMBattle._dex)
+      .filter(([id, sp]) => (sp.num >= 1 && sp.num <= 1025) && PKMTeam.hasLearnset(id) && (!sp.baseSpecies || normId(sp.baseSpecies) === id))
+      .filter(([, sp]) => Object.values(sp.baseStats).reduce((a, b) => a + b, 0) >= 500)
+      .map(([id]) => id);
+    const team = [];
+    const used = new Set();
+    while (team.length < 6 && pool.length) {
+      const id = pool[Math.floor(Math.random() * pool.length)];
+      if (used.has(id)) continue;
+      used.add(id);
+      const level = 55 + Math.floor(Math.random() * 11);
+      team.push({ species: id, level, nature: '', ability: PKMBattle._dex[id].abilities?.[0] || '', moves: PKMTeam.chooseAutoMoves(id, level) });
+    }
+    return team;
+  }
+
   async function init() {
-    const [dex, moves] = await Promise.all([
+    const [dex, moves, learnsets] = await Promise.all([
       fetch('./src/data/pokedex.json').then(r => r.json()),
       fetch('./src/data/moves.json').then(r => r.json()),
+      fetch('./src/data/learnsets.json').then(r => r.json()),
     ]);
     PKMBattle.setData(dex, moves);
+    PKMTeam.setData(dex, moves, learnsets);
     PKMBattle._dex = dex; PKMBattle._moves = moves;
+    const dl = $('species-list');
+    Object.values(dex).sort((a, b) => a.num - b.num).forEach(sp => { const o = document.createElement('option'); o.value = sp.name; dl.appendChild(o); });
+    const specs = loadEditorSpecs();
+    renderEditor('player', specs.player);
+    renderEditor('enemy', specs.enemy);
+    $('btn-save-teams').onclick = () => saveEditorSpecs(true);
+    $('btn-validate').onclick = () => showValidate('');
+    $('btn-random-player').onclick = () => { renderEditor('player', randomSpec()); saveEditorSpecs(false); showValidate('已随机生成我方队伍。'); };
+    $('btn-reset-teams').onclick = () => { renderEditor('player', specFromPreset('player')); renderEditor('enemy', specFromPreset('gym')); saveEditorSpecs(false); showValidate('已恢复内置队伍。'); };
     $('btn-start').onclick = () => startBattle(null);
     $('btn-config').onclick = () => {
       try {

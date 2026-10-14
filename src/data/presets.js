@@ -6,7 +6,7 @@
       name: '玩家', tier: 3,
       party: [
         { species: 'venusaur', level: 62, moves: ['seedbomb', 'sludgebomb', 'earthpower', 'sleeppowder'] },
-        { species: 'charizard', level: 62, moves: ['flamethrower', 'airslash', 'dragonpulse', 'roost'] },
+        { species: 'charizard', level: 62, moves: ['flamethrower', 'airslash', 'dragonpulse', 'willowisp'] },
         { species: 'blastoise', level: 62, moves: ['hydropump', 'icebeam', 'aurasphere', 'rapidspin'] },
         { species: 'pikachu', level: 62, moves: ['thunderbolt', 'irontail', 'quickattack', 'surf'] },
         { species: 'gengar', level: 62, moves: ['shadowball', 'sludgebomb', 'focusblast', 'thunderbolt'] },
@@ -24,10 +24,10 @@
     gym: {
       name: '馆主·岚', tier: 2,
       party: [
-        { species: 'pidgeot', level: 45, moves: ['airslash', 'quickattack', 'roost', 'steelwing'] },
+        { species: 'corviknight', level: 45, moves: ['bravebird', 'ironhead', 'bodypress', 'roost'] },
         { species: 'skarmory', level: 45, moves: ['steelwing', 'drillpeck', 'roost', 'spikes'] },
         { species: 'gyarados', level: 47, moves: ['waterfall', 'crunch', 'icefang', 'dragondance'] },
-        { species: 'aerodactyl', level: 47, moves: ['stoneedge', 'earthquake', 'crunch', 'roost'] },
+        { species: 'talonflame', level: 47, moves: ['bravebird', 'flareblitz', 'swordsdance', 'uturn'] },
       ],
     },
     champion: {
