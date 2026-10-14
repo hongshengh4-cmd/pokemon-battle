@@ -12,10 +12,11 @@ const ctx = { console, Math, JSON, Object, Array, Number, String, Boolean, Promi
 ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(await readFile(new URL('src/engine/typechart.js', root), 'utf8'), ctx);
+vm.runInContext(await readFile(new URL('src/engine/mechanics.js', root), 'utf8'), ctx);
 vm.runInContext(await readFile(new URL('src/engine/battle.js', root), 'utf8'), ctx);
 vm.runInContext(await readFile(new URL('src/engine/team.js', root), 'utf8'), ctx);
 vm.runInContext(await readFile(new URL('src/data/presets.js', root), 'utf8'), ctx);
-const E = ctx.PKMBattle, T = ctx.PKMTypeChart, TEAM = ctx.PKMTeam, PRESETS = ctx.PKMPresets;
+const E = ctx.PKMBattle, T = ctx.PKMTypeChart, TEAM = ctx.PKMTeam, PRESETS = ctx.PKMPresets, MECH = ctx.PKMMechanics;
 E.setData(dex, moves);
 TEAM.setData(dex, moves, learnsets);
 
@@ -99,6 +100,110 @@ for (const [key, trainer] of Object.entries(PRESETS.TRAINERS)) {
 check('全部预设队伍招式合法（无学习面物种仅警示）', presetIssues.length === 0, presetIssues.join(' | '));
 const badTeam = TEAM.validateTeam([{ species: 'pikachu', level: 50, moves: ['leafstorm'] }]);
 check('非法招式整队校验报错', badTeam.ok === false && badTeam.errors.length > 0, badTeam.errors.join('；'));
+
+
+// Phase 3: abilities, items, weather/terrain/screens/hazards
+check('机制目录包含特性与道具', Object.keys(MECH.ABILITIES).length >= 80 && MECH.isSupportedItem('leftovers'));
+{
+  const gyara = [E.createPokemon('gyarados', 50, ['waterfall'], { ability: 'Intimidate' })];
+  const mach = [E.createPokemon('machamp', 50, ['tackle'], { ability: 'Guts' })];
+  new E.Battle(gyara, mach, { seed: 3 });
+  check('威吓入场降低对手攻击', mach[0].stages.atk === -1, 'got ' + mach[0].stages.atk);
+}
+{
+  const torkoal = [E.createPokemon('torkoal', 50, ['tackle'], { ability: 'Drought' })];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(torkoal, foe, { seed: 3 });
+  check('日照入场开启晴天', b.weather === 'sun', 'got ' + b.weather);
+}
+{
+  const pikaAtk = [E.createPokemon('pikachu', 50, ['thunderbolt'], { ability: 'Lightning Rod' })];
+  const pikaUser = [E.createPokemon('pikachu', 50, ['thunderbolt'], { ability: 'Static' })];
+  const b = new E.Battle(pikaUser, pikaAtk, { seed: 3 });
+  const before = pikaAtk[0].hp;
+  b.useMove(0, pikaUser[0], pikaAtk[0], pikaUser[0].moves[0]);
+  check('避雷针免疫电招并提升特攻', pikaAtk[0].hp === before && pikaAtk[0].stages.spa === 1);
+}
+{
+  const bronzong = [E.createPokemon('bronzong', 50, ['tackle'], { ability: 'Levitate' })];
+  const rat = [E.createPokemon('rattata', 50, ['earthquake'])];
+  const b = new E.Battle(rat, bronzong, { seed: 3 });
+  b.useMove(0, rat[0], bronzong[0], rat[0].moves[0]);
+  check('漂浮免疫地震', bronzong[0].hp === bronzong[0].maxHp);
+}
+{
+  const aggron = [E.createPokemon('aggron', 50, ['tackle'], { ability: 'Sturdy' })];
+  const mach = [E.createPokemon('machamp', 100, ['closecombat'])];
+  const b = new E.Battle(mach, aggron, { seed: 3 });
+  b.useMove(0, mach[0], aggron[0], mach[0].moves[0]);
+  check('结实满HP致命攻击留1HP', aggron[0].hp === 1, 'got ' + aggron[0].hp);
+}
+{
+  const pika = [E.createPokemon('pikachu', 50, ['tackle'], { item: 'Focus Sash' })];
+  const mach = [E.createPokemon('machamp', 100, ['closecombat'])];
+  const b = new E.Battle(mach, pika, { seed: 3 });
+  b.useMove(0, mach[0], pika[0], mach[0].moves[0]);
+  check('气势披带满HP留1HP并消耗', pika[0].hp === 1 && !pika[0].item);
+}
+{
+  const pika = E.createPokemon('pikachu', 50, ['irontail']);
+  const pikaBand = E.createPokemon('pikachu', 50, ['irontail'], { item: 'Choice Band' });
+  const target = E.createPokemon('squirtle', 50, ['tackle']);
+  check('讲究头巾提高物理伤害', E.estimateDamage(pikaBand, target, pikaBand.moves[0], 1).damage > E.estimateDamage(pika, target, pika.moves[0], 1).damage);
+}
+{
+  const pika = [E.createPokemon('pikachu', 50, ['tackle'], { item: 'Leftovers' })];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(pika, foe, { seed: 3 });
+  pika[0].hp = Math.floor(pika[0].maxHp / 2);
+  b.endOfTurn();
+  check('剩饭回合末回复1/16', pika[0].hp === Math.floor(pika[0].maxHp / 2) + Math.floor(pika[0].maxHp / 16), 'got ' + pika[0].hp);
+}
+{
+  const user = [E.createPokemon('tapukoko', 50, ['thunderbolt'], { ability: 'Electric Surge' })];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(user, foe, { seed: 3 });
+  check('电气制造者开启电气场地', b.field.terrain === 'electric', 'got ' + b.field.terrain);
+}
+{
+  const user = [E.createPokemon('venusaur', 50, ['spikes'])];
+  const foe = [E.createPokemon('rattata', 50, ['tackle']), E.createPokemon('diglett', 50, ['tackle'])];
+  const b = new E.Battle(user, foe, { seed: 3 });
+  b.useMove(0, user[0], foe[0], user[0].moves[0]);
+  const before = foe[1].hp;
+  b.doSwitch(1, 1);
+  check('撒菱入场伤害1/8', b.field.sides[1].spikes === 1 && foe[1].hp === before - Math.floor(foe[1].maxHp / 8), `hp ${before}->${foe[1].hp}`);
+}
+{
+  const user = [E.createPokemon('blastoise', 50, ['reflect'])];
+  const foe = [E.createPokemon('machamp', 50, ['tackle'])];
+  const b = new E.Battle(user, foe, { seed: 3 });
+  const beforeDmg = E.estimateDamage(foe[0], user[0], foe[0].moves[0], 1).damage;
+  b.useMove(0, user[0], foe[0], user[0].moves[0]);
+  const afterDmg = E.estimateDamage(foe[0], user[0], foe[0].moves[0], 1).damage;
+  check('反射壁降低物理伤害', b.field.sides[0].reflect > 0 && afterDmg < beforeDmg, `${beforeDmg}->${afterDmg}`);
+}
+{
+  const user = [E.createPokemon('alakazam', 50, ['trickroom'])];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(foe, user, { seed: 3 });
+  b.useMove(1, user[0], foe[0], user[0].moves[0]);
+  check('戏法空间开启', b.field.trickRoom === 5, 'got ' + b.field.trickRoom);
+}
+{
+  const pika = [E.createPokemon('pikachu', 50, ['thunderbolt'], { item: 'Choice Band' })];
+  const foe = [E.createPokemon('rattata', 50, ['tackle'])];
+  const b = new E.Battle(pika, foe, { seed: 3 });
+  b.useMove(0, pika[0], foe[0], pika[0].moves[0]);
+  check('讲究道具锁定招式', pika[0].choiceLockedMove === 'thunderbolt', 'got ' + pika[0].choiceLockedMove);
+}
+{
+  const char = [E.createPokemon('charizard', 50, ['willowisp'], { item: 'Weakness Policy', ability: 'Blaze' })];
+  const turtle = [E.createPokemon('squirtle', 50, ['watergun'])];
+  const b = new E.Battle(turtle, char, { seed: 3 });
+  b.useMove(0, turtle[0], char[0], turtle[0].moves[0]);
+  check('弱点保险受克制攻击后双攻+2', char[0].stages.atk === 2 && char[0].stages.spa === 2 && !char[0].item);
+}
 
 console.log(`\nTOTAL pass=${pass} fail=${fail}`);
 process.exit(fail ? 1 : 0);

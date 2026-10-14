@@ -107,7 +107,12 @@
         if (knownLearnset && !isLegalMove(sid, mid, level)) errors.push(`${at} ${sid}：${MOVES[mid].name} 不在合法学习面内（Lv.${level}）`);
       }
       if (entry.ability && DEX[sid].abilities?.length && !DEX[sid].abilities.some(a => normId(a) === normId(entry.ability))) {
-        warnings.push(`${at} ${sid}：特性 ${entry.ability} 不在该物种特性列表中`);
+        errors.push(`${at} ${sid}：特性 ${entry.ability} 不在该物种特性列表中`);
+      } else if (entry.ability && root.PKMMechanics && !root.PKMMechanics.isSupportedAbility(entry.ability)) {
+        warnings.push(`${at} ${sid}：特性 ${entry.ability} 的效果将在后续阶段实现（当前不触发）`);
+      }
+      if (entry.item && root.PKMMechanics && !root.PKMMechanics.isSupportedItem(entry.item)) {
+        warnings.push(`${at} ${sid}：道具 ${entry.item} 的效果将在后续阶段实现（当前不触发）`);
       }
     });
     return { ok: errors.length === 0, errors, warnings };

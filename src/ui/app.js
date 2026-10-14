@@ -21,7 +21,9 @@
     const me = battle.cur(0), foe = battle.cur(1);
     const fill = (p, prefix) => {
       $(prefix + '-name').textContent = p.name + (p.status ? `（${PKMBattle.STATUS_NAMES[p.status] || p.status}）` : '');
-      $(prefix + '-sub').textContent = `Lv.${p.level} · ${p.types.join('/')} · ${p.speciesName}`;
+      const ab = PKMMechanics.abilityInfo(p.ability);
+      const it = p.item ? PKMMechanics.itemInfo(p.item) : null;
+      $(prefix + '-sub').textContent = `Lv.${p.level} · ${p.types.join('/')} · ${p.speciesName} · 特性 ${ab?.name || p.ability || '无'}${it ? ' · ' + it.name : ''}${p.choiceLockedMove ? ' · 讲究锁定中' : ''}`;
       const ratio = p.hp / p.maxHp;
       const bar = $(prefix + '-hp');
       bar.style.width = (ratio * 100).toFixed(1) + '%';
@@ -41,6 +43,21 @@
       });
     };
     teamRow(0, $('p-team')); teamRow(1, $('e-team'));
+    const fieldParts = [];
+    const weatherNames = { sun: '☀️ 大晴天', rain: '🌧️ 下雨', sand: '🌪️ 沙暴', snow: '❄️ 下雪' };
+    const terrainNames = { electric: '⚡ 电气场地', grassy: '🌿 青草场地', misty: '🌫️ 薄雾场地', psychic: '🔮 精神场地' };
+    if (battle.weather) fieldParts.push(weatherNames[battle.weather] + (battle.weatherTurns ? `（${battle.weatherTurns}）` : ''));
+    if (battle.field.terrain) fieldParts.push(terrainNames[battle.field.terrain] + `（${battle.field.terrainTurns}）`);
+    if (battle.field.trickRoom > 0) fieldParts.push(`🌀 戏法空间（${battle.field.trickRoom}）`);
+    if (battle.field.gravity > 0) fieldParts.push(`重力（${battle.field.gravity}）`);
+    const sideText = (sc, label) => {
+      const a = [];
+      if (sc.stealthrock) a.push('隐形岩'); if (sc.spikes) a.push(`撒菱×${sc.spikes}`); if (sc.toxicspikes) a.push(`毒菱×${sc.toxicspikes}`); if (sc.stickyweb) a.push('黏黏网');
+      if (sc.reflect) a.push(`反射壁${sc.reflect}`); if (sc.lightscreen) a.push(`光墙${sc.lightscreen}`); if (sc.auroraveil) a.push(`极光幕${sc.auroraveil}`); if (sc.tailwind) a.push(`顺风${sc.tailwind}`);
+      if (a.length) fieldParts.push(label + '：' + a.join('、'));
+    };
+    sideText(battle.field.sides[0], '我方'); sideText(battle.field.sides[1], '敌方');
+    $('field-state').textContent = '场地：' + (fieldParts.length ? fieldParts.join(' · ') : '无特殊效果');
 
     const log = $('log');
     log.textContent = battle.log.join('\n');
@@ -52,7 +69,7 @@
     me.moves.forEach((m, i) => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.disabled = over || battle.pendingSwitch !== null || m.ppLeft <= 0;
+      b.disabled = over || battle.pendingSwitch !== null || m.ppLeft <= 0 || (me.choiceLockedMove && me.choiceLockedMove !== m.id) || me.volatile.disableMove === m.id;
       b.innerHTML = `${m.name}<small>${m.type} · ${m.category}${m.basePower ? ' · 威力 ' + m.basePower : ''} · PP ${m.ppLeft}/${m.pp}</small>`;
       b.onclick = () => act({ kind: 'move', index: i });
       moves.appendChild(b);
@@ -155,7 +172,7 @@
   }
   function editorRoot(side) { return side === 'player' ? $('editor-player') : $('editor-enemy'); }
   function specFromPreset(key) {
-    return PKMPresets.TRAINERS[key].party.map(p => ({ species: p.species, level: p.level, nature: '', ability: '', moves: p.moves.slice() }));
+    return PKMPresets.TRAINERS[key].party.map(p => ({ species: p.species, level: p.level, nature: p.nature || '', ability: p.ability || '', item: p.item || '', moves: p.moves.slice() }));
   }
   function loadEditorSpecs() {
     try {
@@ -194,8 +211,12 @@
         sel.value = prev;
       }
     });
+    const abInfo = PKMMechanics.abilityInfo(abilitySel.value);
+    abilitySel.title = abInfo ? `${abInfo.name}：${abInfo.desc}` : '该特性效果将在后续阶段实现';
+    const itemSel = row.querySelector('.f-item');
+    if (itemSel) itemSel.title = PKMMechanics.itemInfo(itemSel.value).desc;
     row.querySelector('.f-note').textContent = dex
-      ? (PKMTeam.hasLearnset(sid) ? `${dex.name} · ${dex.types.join('/')} · 合法招式 ${legal.length} 个` : `${dex.name} · 数据集暂无现行学习面（未校验）`)
+      ? (PKMTeam.hasLearnset(sid) ? `${dex.name} · ${dex.types.join('/')} · 合法招式 ${legal.length} 个 · ${abInfo ? '特性已生效' : '特性效果待实现'}` : `${dex.name} · 数据集暂无现行学习面（未校验）`)
       : '物种不存在';
   }
   function renderEditor(side, specs) {
@@ -211,6 +232,7 @@
           <input class="f-level" type="number" min="1" max="100" style="width:72px" title="等级">
           <select class="f-nature" title="性格">${NATURES.map(n => `<option value="${n}">${n || '性格：无修正'}</option>`).join('')}</select>
           <select class="f-ability" title="特性"></select>
+          <select class="f-item" title="道具">${Object.values(PKMMechanics.ITEMS).map(i => `<option value="${i.id}">${i.name}</option>`).join('')}</select>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
           ${[0, 1, 2, 3].map(() => `<select class="f-move"></select>`).join('')}
@@ -221,6 +243,7 @@
       row.querySelector('.f-level').value = spec.level || 50;
       row.querySelector('.f-nature').value = spec.nature || '';
       row.querySelector('.f-ability').dataset.want = spec.ability || '';
+      row.querySelector('.f-item').value = spec.item || '';
       row.querySelectorAll('.f-move').forEach((sel, k) => { sel.dataset.want = (spec.moves || [])[k] || ''; });
       refreshRowOptions(row);
       row.querySelector('.f-species').addEventListener('change', () => {
@@ -243,7 +266,7 @@
       const level = parseInt(row.querySelector('.f-level').value || '50', 10) || 50;
       let moves = [...row.querySelectorAll('.f-move')].map(sel => sel.value).filter(Boolean);
       if (!moves.length) moves = PKMTeam.chooseAutoMoves(sid, level);
-      specs.push({ species: sid, level, nature: row.querySelector('.f-nature').value, ability: row.querySelector('.f-ability').value, moves });
+      specs.push({ species: sid, level, nature: row.querySelector('.f-nature').value, ability: row.querySelector('.f-ability').value, item: row.querySelector('.f-item').value, moves });
     });
     return specs;
   }
@@ -275,7 +298,7 @@
       if (used.has(id)) continue;
       used.add(id);
       const level = 55 + Math.floor(Math.random() * 11);
-      team.push({ species: id, level, nature: '', ability: PKMBattle._dex[id].abilities?.[0] || '', moves: PKMTeam.chooseAutoMoves(id, level) });
+      team.push({ species: id, level, nature: '', ability: PKMBattle._dex[id].abilities?.[0] || '', item: ['leftovers', 'lifeorb', 'focussash', 'heavydutyboots'][team.length % 4], moves: PKMTeam.chooseAutoMoves(id, level) });
     }
     return team;
   }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>宝可梦对战 · 自研引擎（第一阶段）</title>
+<title>宝可梦对战 · 自研引擎（第三阶段）</title>
 <link rel="stylesheet" href="./src/ui/styles.css">
 </head>
 <body>
@@ -55,6 +55,7 @@
     </section>
   </div>
 
+  <div id="field-state" class="note" style="text-align:center;font-weight:700;margin-top:8px">场地：无特殊效果</div>
   <div class="result hidden" id="result"></div>
 
   <div class="grid2" style="margin-top:12px">
@@ -63,7 +64,7 @@
       <div class="moves" id="moves"></div>
       <h3 style="margin:14px 0 8px">换人</h3>
       <div class="switches" id="switches"></div>
-      <p class="note">规则（第一阶段）：单打、6v6 队伍、优先度/速度判定、命中、会心、STAB、属性克制、灼伤减攻、麻痹减速、异常状态与能力等级、天气（晴/雨/沙暴）基础效果。特性与道具先只记录数据，效果留到第三阶段。</p>
+      <p class="note">规则（第三阶段）：单打、6v6 队伍、优先度/速度判定、命中、会心、异常状态、首批高频特性与常用道具、天气/四种场地、隐形岩/撒菱/毒菱/黏黏网、双墙/极光幕、顺风与戏法空间。</p>
     </div>
     <div>
       <h3 style="margin:4px 0 8px">战斗日志</h3>
@@ -73,7 +74,7 @@
 
   <details style="margin-top:14px" open>
     <summary><b>队伍编辑器（合法配招）</b></summary>
-    <p class="note">招式下拉只会列出该宝可梦在现行世代（Gen 9）学习面内的合法招式（含升级、招式学习器、蛋招式，并已合并进化前形态）。编辑会自动保存在本机浏览器中；勾选后点上方“开始新战斗”即按编辑队伍开战。数据集暂无学习面的物种会被标记为“未校验”，仍可游玩。</p>
+    <p class="note">招式下拉只会列出该宝可梦在现行世代（Gen 9）学习面内的合法招式；可同时设置特性与当前已实现效果的道具。编辑会自动保存在本机浏览器中；勾选后点上方“开始新战斗”即按编辑队伍开战。未实现效果的特性/道具会在校验中明确提示，不会假装生效。</p>
     <div class="controls" style="margin-bottom:8px">
       <button id="btn-validate" class="blue" type="button">校验两队</button>
       <button id="btn-save-teams" type="button">保存编辑</button>
@@ -99,6 +100,7 @@
 </main>
 
 <script src="./src/engine/typechart.js"></script>
+<script src="./src/engine/mechanics.js"></script>
 <script src="./src/engine/battle.js"></script>
 <script src="./src/engine/team.js"></script>
 <script src="./src/data/presets.js"></script>

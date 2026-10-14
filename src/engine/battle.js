@@ -5,7 +5,8 @@
  * accuracy, crit, STAB, burn, weather basics (sun/rain/sand), major status
  * (par/brn/psn/tox/slp/frz), confusion, stat stages, secondary effects,
  * boosts/drain/recoil/heal/multihit from Showdown-style move data,
- * switching, simple AI. Items/abilities are data-only for now (Phase 3).
+ * switching, simple AI. Phase 3 adds a curated ability/item set, weather
+ * abilities/moves, terrains, entry hazards, screens, Tailwind and Trick Room.
  */
 (function (root) {
   'use strict';
@@ -58,6 +59,134 @@
   let DEX = {}, MOVES = {};
   function setData(dex, moves) { DEX = dex || {}; MOVES = moves || {}; }
   const normId = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const MECH = root.PKMMechanics || null;
+  const TYPE_ITEMS = MECH?.TYPE_ITEMS || {};
+  const abilityId = p => normId(p?.ability || '');
+  const itemId = p => normId(p?.item || '');
+  const hasAbility = (p, ...ids) => ids.includes(abilityId(p));
+  const STAT_LABELS = { atk: '攻击', def: '防御', spa: '特攻', spd: '特防', spe: '速度', accuracy: '命中率', evasion: '闪避率' };
+  const PINCH_ABILITIES = { Fire: 'blaze', Water: 'torrent', Grass: 'overgrow', Bug: 'swarm' };
+  const STATUS_BY_ABILITY = { static: 'par', flamebody: 'brn', poisonpoint: 'psn' };
+  const newSideField = () => ({ stealthrock: false, spikes: 0, toxicspikes: 0, stickyweb: false, reflect: 0, lightscreen: 0, auroraveil: 0, tailwind: 0 });
+
+  function isGrounded(p) {
+    if (!p) return false;
+    if (p._battle?.field?.gravity > 0) return true;
+    return !p.types?.includes('Flying') && abilityId(p) !== 'levitate';
+  }
+
+  function battleStat(p, key, opts = {}) {
+    let stage = opts.ignoreStages ? 0 : (p.stages[key] || 0);
+    if (opts.crit) stage = opts.isAttackStat ? Math.max(stage, 0) : Math.min(stage, 0);
+    let v = p.stats[key] * stageMult(stage, key === 'accuracy' ? 'acc' : key === 'evasion' ? 'eva' : undefined);
+    const battle = p._battle;
+    if (key === 'atk') {
+      if (hasAbility(p, 'hugepower', 'purepower')) v *= 2;
+      if (hasAbility(p, 'hustle')) v *= 1.5;
+      if (hasAbility(p, 'guts') && p.status) v *= 1.5;
+      if (hasAbility(p, 'defeatist') && p.hp <= p.maxHp / 2) v *= 0.5;
+      if (itemId(p) === 'choiceband') v *= 1.5;
+      if (itemId(p) === 'lightball' && p.speciesId === 'pikachu') v *= 2;
+    }
+    if (key === 'def') {
+      if (hasAbility(p, 'furcoat')) v *= 2;
+      if (hasAbility(p, 'marvelscale') && p.status) v *= 1.5;
+      if (hasAbility(p, 'grassypelt') && battle?.field?.terrain === 'grassy' && isGrounded(p)) v *= 1.5;
+      if (battle?.weather === 'snow' && p.types.includes('Ice')) v *= 1.5;
+    }
+    if (key === 'spa') {
+      if (hasAbility(p, 'defeatist') && p.hp <= p.maxHp / 2) v *= 0.5;
+      if (hasAbility(p, 'solarpower') && battle?.weather === 'sun') v *= 1.5;
+      if (itemId(p) === 'choicespecs') v *= 1.5;
+      if (itemId(p) === 'lightball' && p.speciesId === 'pikachu') v *= 2;
+    }
+    if (key === 'spd') {
+      if (battle?.weather === 'sand' && p.types.includes('Rock')) v *= 1.5;
+    }
+    if (key === 'spe') {
+      if (p.status === 'par' && !hasAbility(p, 'quickfeet')) v *= 0.5;
+      if (hasAbility(p, 'quickfeet') && p.status) v *= 1.5;
+      if (battle?.weather === 'rain' && hasAbility(p, 'swiftswim')) v *= 2;
+      if (battle?.weather === 'sun' && hasAbility(p, 'chlorophyll')) v *= 2;
+      if (battle?.weather === 'sand' && hasAbility(p, 'sandrush')) v *= 2;
+      if (battle?.weather === 'snow' && hasAbility(p, 'slushrush')) v *= 2;
+      if (itemId(p) === 'choicescarf') v *= 1.5;
+      if (battle?.field?.sides?.[p._side]?.tailwind > 0) v *= 2;
+    }
+    return Math.max(1, Math.floor(v));
+  }
+
+  function abilityMoveInteraction(attacker, defender, move) {
+    if (!move || !defender || defender === attacker) return null;
+    if (['self', 'allySide', 'foeSide', 'all'].includes(move.target)) return null;
+    if (move.flags?.sound && hasAbility(defender, 'soundproof')) return { kind: 'immune', label: '隔音' };
+    if (move.flags?.bullet && hasAbility(defender, 'bulletproof')) return { kind: 'immune', label: '防弹' };
+    const t = move.type;
+    if (t === 'Ground' && hasAbility(defender, 'levitate') && !(defender._battle?.field?.gravity > 0)) return { kind: 'immune', label: '漂浮' };
+    if (t === 'Fire' && hasAbility(defender, 'flashfire')) return { kind: 'flashfire', label: '引火' };
+    if (t === 'Electric' && hasAbility(defender, 'voltabsorb')) return { kind: 'heal', label: '蓄电' };
+    if (t === 'Electric' && hasAbility(defender, 'lightningrod')) return { kind: 'boost', boosts: { spa: 1 }, label: '避雷针' };
+    if (t === 'Electric' && hasAbility(defender, 'motordrive')) return { kind: 'boost', boosts: { spe: 1 }, label: '电气引擎' };
+    if (t === 'Water' && hasAbility(defender, 'waterabsorb', 'dryskin')) return { kind: 'heal', label: '储水' };
+    if (t === 'Water' && hasAbility(defender, 'stormdrain')) return { kind: 'boost', boosts: { spa: 1 }, label: '引水' };
+    if (t === 'Grass' && hasAbility(defender, 'sapsipper')) return { kind: 'boost', boosts: { atk: 1 }, label: '食草' };
+    if (t === 'Ground' && hasAbility(defender, 'eartheater')) return { kind: 'heal', label: '食土' };
+    if (move.basePower && hasAbility(defender, 'wonderguard') && effectiveness(t, defender.types) <= 1) return { kind: 'immune', label: '神奇守护' };
+    return null;
+  }
+
+  function modifiedPower(attacker, defender, move) {
+    let power = move.basePower || 0;
+    const battle = attacker._battle;
+    if (battle?.weather === 'sun') { if (move.type === 'Fire') power *= 1.5; if (move.type === 'Water') power *= 0.5; }
+    if (battle?.weather === 'rain') { if (move.type === 'Water') power *= 1.5; if (move.type === 'Fire') power *= 0.5; }
+    const terrain = battle?.field?.terrain;
+    if (terrain === 'electric' && move.type === 'Electric' && isGrounded(attacker)) power *= 1.3;
+    if (terrain === 'grassy') {
+      if (move.type === 'Grass' && isGrounded(attacker)) power *= 1.3;
+      if (['earthquake', 'bulldoze', 'magnitude'].includes(move.id) && isGrounded(defender)) power *= 0.5;
+    }
+    if (terrain === 'psychic' && move.type === 'Psychic' && isGrounded(attacker)) power *= 1.3;
+    if (terrain === 'misty' && move.type === 'Dragon' && isGrounded(defender)) power *= 0.5;
+    const pinch = PINCH_ABILITIES[move.type];
+    if (pinch && hasAbility(attacker, pinch) && attacker.hp <= attacker.maxHp / 3) power *= 1.5;
+    if ((move.basePower || 0) <= 60 && hasAbility(attacker, 'technician')) power *= 1.5;
+    if (move.flags?.punch && hasAbility(attacker, 'ironfist')) power *= 1.2;
+    if (move.flags?.contact && hasAbility(attacker, 'toughclaws')) power *= 1.3;
+    if (move.flags?.bite && hasAbility(attacker, 'strongjaw')) power *= 1.5;
+    if (move.flags?.pulse && hasAbility(attacker, 'megalauncher')) power *= 1.5;
+    if (move.recoil && hasAbility(attacker, 'reckless')) power *= 1.2;
+    if (move.secondary && hasAbility(attacker, 'sheerforce')) power *= 1.3;
+    if (move.type === 'Fire' && attacker.volatile?.flashfire && hasAbility(attacker, 'flashfire')) power *= 1.5;
+    if (battle?.weather === 'sand' && ['Rock', 'Ground', 'Steel'].includes(move.type) && hasAbility(attacker, 'sandforce')) power *= 1.3;
+    if (TYPE_ITEMS[itemId(attacker)] === move.type) power *= 1.2;
+    if (itemId(attacker) === 'muscleband' && move.category === 'Physical') power *= 1.1;
+    if (itemId(attacker) === 'wiseglasses' && move.category === 'Special') power *= 1.1;
+    return power;
+  }
+
+  function defenderDamageMultiplier(attacker, defender, move, eff) {
+    let mult = 1;
+    if (hasAbility(defender, 'thickfat') && ['Fire', 'Ice'].includes(move.type)) mult *= 0.5;
+    if (hasAbility(defender, 'heatproof') && move.type === 'Fire') mult *= 0.5;
+    if (hasAbility(defender, 'purifyingsalt') && move.type === 'Ghost') mult *= 0.5;
+    if (eff > 1 && hasAbility(defender, 'filter', 'solidrock', 'prismarmor')) mult *= 0.75;
+    if ((hasAbility(defender, 'multiscale', 'shadowshield')) && defender.hp === defender.maxHp) mult *= 0.5;
+    if (hasAbility(defender, 'icescales') && move.category === 'Special') mult *= 0.5;
+    if (hasAbility(defender, 'punkrock') && move.flags?.sound) mult *= 0.5;
+    if (hasAbility(defender, 'fluffy')) { if (move.flags?.contact) mult *= 0.5; if (move.type === 'Fire') mult *= 2; }
+    if (hasAbility(attacker, 'tintedlens') && eff > 0 && eff < 1) mult *= 2;
+    if (itemId(attacker) === 'lifeorb') mult *= 1.3;
+    if (itemId(attacker) === 'expertbelt' && eff > 1) mult *= 1.2;
+    const battle = defender._battle;
+    if (battle && !hasAbility(attacker, 'infiltrator')) {
+      const sc = battle.field?.sides?.[defender._side];
+      if (sc) {
+        if ((move.category === 'Physical' && sc.reflect > 0) || (move.category === 'Special' && sc.lightscreen > 0) || sc.auroraveil > 0) mult *= 0.5;
+      }
+    }
+    return mult;
+  }
 
   function createPokemon(speciesId, level, moveIds, opts = {}) {
     const id = normId(speciesId);
@@ -75,34 +204,30 @@
       types: species.types.slice(), level, stats, maxHp: stats.hp, hp: stats.hp,
       moves, status: null, statusTurns: 0, toxicCounter: 1, sleepTurns: 0,
       stages: { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 },
-      volatile: {}, ability: opts.ability || (species.abilities?.[0] ?? null), item: opts.item || null,
+      volatile: {}, ability: opts.ability ? normId(opts.ability) : (normId(species.abilities?.[0] ?? '') || null), item: opts.item ? normId(opts.item) : null,
       gender: opts.gender || null, shiny: !!opts.shiny, fainted: false,
+      choiceLockedMove: null, enteredTurn: 0, _enteredThisTurn: false, _side: null,
     };
   }
 
-  function effStat(p, key) {
-    let v = p.stats[key] * stageMult(p.stages[key] || 0);
-    if (key === 'spe' && p.status === 'par') v *= 0.5;
-    return Math.max(1, Math.floor(v));
-  }
+  function effStat(p, key) { return battleStat(p, key); }
 
-  function estimateDamage(attacker, defender, move, rngVal = 0.925) {
+  function estimateDamage(attacker, defender, move, rngVal = 0.925, opts = {}) {
     if (!move.basePower) return { damage: 0, eff: 1, crit: false };
+    if (abilityMoveInteraction(attacker, defender, move)) return { damage: 0, eff: 0, crit: false };
     const isPhys = move.category === 'Physical';
-    const atk = effStat(attacker, isPhys ? 'atk' : 'spa');
-    const def = effStat(defender, isPhys ? 'def' : 'spd');
-    let power = move.basePower;
-    const wb = attacker._battle?.weather;
-    if (wb === 'sun') { if (move.type === 'Fire') power *= 1.5; if (move.type === 'Water') power *= 0.5; }
-    if (wb === 'rain') { if (move.type === 'Water') power *= 1.5; if (move.type === 'Fire') power *= 0.5; }
+    const atk = battleStat(attacker, isPhys ? 'atk' : 'spa', { ignoreStages: hasAbility(defender, 'unaware'), crit: !!opts.crit, isAttackStat: true });
+    const def = battleStat(defender, isPhys ? 'def' : 'spd', { ignoreStages: hasAbility(attacker, 'unaware'), crit: !!opts.crit, isAttackStat: false });
+    const power = modifiedPower(attacker, defender, move);
     const level = attacker.level;
     let dmg = Math.floor(((Math.floor((2 * level / 5 + 2) * power * atk / def)) / 50)) + 2;
     const eff = effectiveness(move.type, defender.types);
     let mult = eff * rngVal;
-    if (attacker.types.includes(move.type)) mult *= 1.5; // STAB
-    if (isPhys && attacker.status === 'brn') mult *= 0.5;
+    if (attacker.types.includes(move.type)) mult *= hasAbility(attacker, 'adaptability') ? 2 : 1.5; // STAB
+    if (isPhys && attacker.status === 'brn' && !hasAbility(attacker, 'guts')) mult *= 0.5;
+    mult *= defenderDamageMultiplier(attacker, defender, move, eff);
     dmg = Math.floor(dmg * mult);
-    return { damage: eff === 0 ? 0 : Math.max(1, dmg), eff, crit: false };
+    return { damage: eff === 0 ? 0 : Math.max(1, dmg), eff, crit: !!opts.crit };
   }
 
   class Battle {
@@ -114,21 +239,229 @@
       this.difficulty = opts.difficulty || 'normal';
       this.weather = opts.weather || null;
       this.weatherTurns = opts.weatherTurns || 0;
+      this.field = { terrain: null, terrainTurns: 0, trickRoom: 0, gravity: 0, sides: [newSideField(), newSideField()] };
       this.turnCount = 0;
       this.log = [];
       this.winner = null; // 0 | 1 | null
       this.pendingSwitch = null; // side index that must switch (player-facing)
-      for (const t of this.teams) for (const p of t) p._battle = this;
+      this.teams.forEach((team, side) => team.forEach(p => { p._battle = this; p._side = side; p._enteredThisTurn = false; }));
       this.say(`战斗开始！${this.cur(1).name} VS ${this.cur(0).name}`);
+      [0, 1].sort((a, b) => effStat(this.cur(b), 'spe') - effStat(this.cur(a), 'spe')).forEach(side => this.onEnter(side, true));
     }
     say(msg) { this.log.push(msg); }
     cur(side) { return this.teams[side][this.active[side]]; }
     alive(side) { return this.teams[side].filter(p => !p.fainted); }
     other(side) { return 1 - side; }
+    sideOf(p) { return p?._side ?? this.teams.findIndex(team => team.includes(p)); }
+
+    setWeather(id, turns = 5) {
+      const map = { sunnyday: 'sun', raindance: 'rain', sandstorm: 'sand', snowscape: 'snow', hail: 'snow', sun: 'sun', rain: 'rain', sand: 'sand', snow: 'snow' };
+      const w = map[normId(id)] || null;
+      if (!w) return;
+      this.weather = w; this.weatherTurns = turns;
+      this.say({ sun: '阳光变得强烈起来！', rain: '开始下雨了！', sand: '沙暴刮起来了！', snow: '开始下雪了！' }[w]);
+    }
+    setTerrain(id, turns = 5) {
+      const t = normId(id).replace(/terrain$/, '');
+      if (!['electric', 'grassy', 'misty', 'psychic'].includes(t)) return;
+      this.field.terrain = t; this.field.terrainTurns = turns;
+      this.say({ electric: '脚下泛起了电光（电气场地）！', grassy: '脚下长出了青草（青草场地）！', misty: '薄雾笼罩了场地（薄雾场地）！', psychic: '脚下变得不可思议（精神场地）！' }[t]);
+    }
+    clearHazards(side) {
+      const sc = this.field.sides[side];
+      const had = sc.stealthrock || sc.spikes || sc.toxicspikes || sc.stickyweb;
+      sc.stealthrock = false; sc.spikes = 0; sc.toxicspikes = 0; sc.stickyweb = false;
+      return had;
+    }
+    applyEntryHazards(side, p) {
+      if (!p || p.fainted || itemId(p) === 'heavydutyboots') return;
+      const sc = this.field.sides[side], foe = this.cur(this.other(side));
+      if (sc.stealthrock) {
+        const dmg = Math.max(1, Math.floor(p.maxHp * effectiveness('Rock', p.types) / 8));
+        this.applyDamage(p, dmg, `${p.name} 受到了隐形岩的伤害！`);
+        if (p.hp <= 0) return;
+      }
+      if (!isGrounded(p)) return;
+      if (sc.spikes) {
+        const frac = [0, 1 / 8, 1 / 6, 1 / 4][Math.min(3, sc.spikes)];
+        this.applyDamage(p, Math.max(1, Math.floor(p.maxHp * frac)), `${p.name} 受到了撒菱的伤害！`);
+        if (p.hp <= 0) return;
+      }
+      if (sc.toxicspikes) {
+        if (p.types.includes('Poison')) { sc.toxicspikes = 0; this.say(`${p.name} 吸收了毒菱！`); }
+        else this.tryStatus(p, sc.toxicspikes >= 2 ? 'tox' : 'psn', foe, { fromStatusMove: false });
+        if (p.hp <= 0) return;
+      }
+      if (sc.stickyweb) this.changeStages(p, { spe: -1 }, foe);
+    }
+    onEnter(side, initial = false) {
+      const p = this.cur(side);
+      if (!p || p.fainted) return;
+      p.enteredTurn = this.turnCount;
+      p._enteredThisTurn = !initial;
+      p.choiceLockedMove = null;
+      this.applyEntryHazards(side, p);
+      if (p.hp <= 0 || p.fainted) return;
+      const foe = this.cur(this.other(side)), ab = abilityId(p);
+      const weatherAbility = { drought: 'sun', drizzle: 'rain', sandstream: 'sand', snowwarning: 'snow' }[ab];
+      if (weatherAbility) this.setWeather(weatherAbility, 5);
+      const terrainAbility = { electricsurge: 'electric', grassysurge: 'grassy', psychicsurge: 'psychic', mistysurge: 'misty' }[ab];
+      if (terrainAbility) this.setTerrain(terrainAbility, 5);
+      if (ab === 'intimidate' && foe && !foe.fainted) {
+        this.say(`${p.name} 的威吓降低了对手的气势！`);
+        this.changeStages(foe, { atk: -1 }, p);
+      }
+      if (ab === 'download' && foe && !foe.fainted) {
+        const key = effStat(foe, 'def') < effStat(foe, 'spd') ? 'atk' : 'spa';
+        this.say(`${p.name} 的下载分析了对手！`);
+        this.changeStages(p, { [key]: 1 }, p);
+      }
+      if (ab === 'frisk' && foe?.item) this.say(`${p.name} 察觉到了对手携带的道具！`);
+      if (ab === 'anticipation' && foe && foe.moves.some(m => m.basePower && effectiveness(m.type, p.types) > 1)) this.say(`${p.name} 因危险而颤抖了（危险预知）！`);
+    }
+    changeStages(p, boosts, source = p, opts = {}) {
+      if (!p || p.fainted || !boosts) return false;
+      let changed = false, lowered = false;
+      for (const [k, raw] of Object.entries(boosts)) {
+        if (!(k in p.stages) || !raw) continue;
+        let amt = raw;
+        if (hasAbility(p, 'contrary')) amt = -amt;
+        if (hasAbility(p, 'simple')) amt *= 2;
+        if (amt < 0 && source && source !== p && !opts.abilityBoost) {
+          const blocked = hasAbility(p, 'clearbody', 'whitesmoke', 'fullmetalbody')
+            || (k === 'atk' && hasAbility(p, 'hypercutter'))
+            || (k === 'def' && hasAbility(p, 'bigpecks'))
+            || (k === 'accuracy' && hasAbility(p, 'keeneye'));
+          if (blocked) { this.say(`${p.name} 的特性阻止了${STAT_LABELS[k]}降低！`); continue; }
+          if (hasAbility(p, 'mirrorarmor') && !opts.noMirror) {
+            this.say(`${p.name} 的镜甲反弹了能力降低！`);
+            this.changeStages(source, { [k]: amt }, p, { noMirror: true });
+            continue;
+          }
+        }
+        const before = p.stages[k];
+        p.stages[k] = clampStage(before + amt);
+        if (p.stages[k] !== before) {
+          changed = true; if (p.stages[k] < before) lowered = true;
+          this.say(`${p.name} 的${STAT_LABELS[k] || k}${p.stages[k] > before ? '提高了' : '降低了'}！`);
+        }
+      }
+      if (lowered && source && source !== p && !opts.abilityBoost) {
+        if (hasAbility(p, 'defiant')) this.changeStages(p, { atk: 2 }, p, { abilityBoost: true });
+        if (hasAbility(p, 'competitive')) this.changeStages(p, { spa: 2 }, p, { abilityBoost: true });
+        if (hasAbility(p, 'rattled')) this.changeStages(p, { spe: 1 }, p, { abilityBoost: true });
+      }
+      if (itemId(p) === 'whiteherb' && Object.values(p.stages).some(v => v < 0)) {
+        for (const k of Object.keys(p.stages)) if (p.stages[k] < 0) p.stages[k] = 0;
+        p.item = null; this.say(`${p.name} 的白色香草恢复了降低的能力！`);
+      }
+      return changed;
+    }
+    tryStatus(p, status, source = null, opts = {}) {
+      if (!p || p.fainted || p.status || !status) return false;
+      const st = status === 'tox' ? 'tox' : status;
+      const ab = abilityId(p);
+      const abilityBlock = (st === 'brn' && ab === 'waterveil') || (st === 'par' && ab === 'limber')
+        || (st === 'slp' && ['insomnia', 'vitalspirit'].includes(ab)) || (['psn', 'tox'].includes(st) && ab === 'immunity')
+        || (st === 'frz' && ab === 'magmaarmor') || ab === 'purifyingsalt'
+        || (st === 'slp' && ab === 'leafguard' && this.weather === 'sun');
+      if (abilityBlock) { this.say(`${p.name} 的特性使其不会陷入该异常状态！`); return false; }
+      if (opts.fromStatusMove && source && source !== p && ab === 'goodasgold') { this.say(`${p.name} 的黄金之躯挡下了变化招式！`); return false; }
+      if ((st === 'brn' && p.types.includes('Fire')) || (st === 'frz' && p.types.includes('Ice'))
+        || (st === 'par' && p.types.includes('Electric')) || (['psn', 'tox'].includes(st) && (p.types.includes('Poison') || p.types.includes('Steel')))) return false;
+      if (isGrounded(p)) {
+        if (this.field.terrain === 'misty') { this.say('薄雾场地保护着宝可梦！'); return false; }
+        if (this.field.terrain === 'electric' && st === 'slp') { this.say('电气场地让宝可梦无法入睡！'); return false; }
+      }
+      p.status = st;
+      if (st === 'tox') p.toxicCounter = 1;
+      if (st === 'slp') p.sleepTurns = 1 + Math.floor(this.rng() * 3);
+      this.say(`${p.name} 陷入了${STATUS_NAMES[st] || st}状态！`);
+      if (source && source !== p && !opts.noSync && hasAbility(p, 'synchronize') && ['brn', 'psn', 'tox', 'par'].includes(st)) {
+        this.say(`${p.name} 的同步把状态传给了对手！`);
+        this.tryStatus(source, st, p, { noSync: true, fromStatusMove: false });
+      }
+      this.checkItemTrigger(p, 'status');
+      return true;
+    }
+    consumeItem(p) { const old = p.item; p.item = null; return old; }
+    checkItemTrigger(p, event, ctx = {}) {
+      if (!p || p.fainted || !p.item) return;
+      const item = itemId(p), healFrac = f => this.heal(p, Math.max(1, Math.floor(p.maxHp * f)), '道具生效');
+      if (item === 'mentalherb' && p.volatile.confusion) { delete p.volatile.confusion; this.consumeItem(p); this.say(`${p.name} 的心灵香草治愈了混乱！`); return; }
+      if (item === 'lumberry' && (p.status || p.volatile.confusion)) { p.status = null; delete p.volatile.confusion; this.consumeItem(p); this.say(`${p.name} 吃下木子果，状态痊愈了！`); return; }
+      const berryStatus = { cheriberry: 'par', chestoberry: 'slp', pechaberry: 'psn', rawstberry: 'brn', aspearberry: 'frz' }[item];
+      if (berryStatus && (p.status === berryStatus || (item === 'pechaberry' && p.status === 'tox'))) { p.status = null; this.consumeItem(p); this.say(`${p.name} 吃下树果，异常状态痊愈了！`); return; }
+      if (item === 'persimberry' && p.volatile.confusion) { delete p.volatile.confusion; this.consumeItem(p); this.say(`${p.name} 吃下柿仔果，混乱解除了！`); return; }
+      if (item === 'leppaberry' && p.moves.some(m => m.ppLeft <= 0)) { const m = p.moves.find(x => x.ppLeft <= 0); m.ppLeft = Math.min(m.pp, m.ppLeft + 10); this.consumeItem(p); this.say(`${p.name} 吃下苹野果，回复了 ${m.name} 的 PP！`); return; }
+      if (event === 'hit') {
+        if (item === 'keeberry' && ctx.move?.category === 'Physical') { this.consumeItem(p); this.changeStages(p, { def: 1 }, p); return; }
+        if (item === 'marangaberry' && ctx.move?.category === 'Special') { this.consumeItem(p); this.changeStages(p, { spd: 1 }, p); return; }
+        if (item === 'enigmaberry' && ctx.eff > 1) { this.consumeItem(p); healFrac(1 / 4); return; }
+        if (item === 'weaknesspolicy' && ctx.eff > 1) { this.consumeItem(p); this.say(`${p.name} 的弱点保险发动了！`); this.changeStages(p, { atk: 2, spa: 2 }, p); return; }
+        if (item === 'jabocaberry' && ctx.move?.category === 'Physical' && ctx.attacker && !ctx.attacker.fainted) { this.consumeItem(p); this.applyDamage(ctx.attacker, Math.max(1, Math.floor(ctx.attacker.maxHp / 8)), `${ctx.attacker.name} 受到了嘉珍果的伤害！`); return; }
+        if (item === 'rowapberry' && ctx.move?.category === 'Special' && ctx.attacker && !ctx.attacker.fainted) { this.consumeItem(p); this.applyDamage(ctx.attacker, Math.max(1, Math.floor(ctx.attacker.maxHp / 8)), `${ctx.attacker.name} 受到了雾莲果的伤害！`); return; }
+      }
+      if (p.hp <= p.maxHp / 2) {
+        if (item === 'sitrusberry') { this.consumeItem(p); healFrac(1 / 4); return; }
+        if (item === 'oranberry') { this.consumeItem(p); this.heal(p, 10, '道具生效'); return; }
+      }
+      if (p.hp <= p.maxHp / 4) {
+        const stat = { liechiberry: 'atk', ganlonberry: 'def', salacberry: 'spe', petayaberry: 'spa', apicotberry: 'spd' }[item];
+        if (stat) { this.consumeItem(p); this.changeStages(p, { [stat]: 1 }, p); }
+      }
+    }
+    applyMoveDamage(p, amount, attacker, move) {
+      let dmg = Math.max(0, amount);
+      if (dmg >= p.hp && p.hp > 1) {
+        if (hasAbility(p, 'sturdy') && p.hp === p.maxHp) { dmg = p.hp - 1; this.say(`${p.name} 用结实撑住了攻击！`); }
+        else if (itemId(p) === 'focussash' && p.hp === p.maxHp) { dmg = p.hp - 1; this.consumeItem(p); this.say(`${p.name} 用气势披带撑住了攻击！`); }
+        else if (itemId(p) === 'focusband' && this.rng() < 0.1) { dmg = p.hp - 1; this.say(`${p.name} 用气势头带撑住了攻击！`); }
+      }
+      const before = p.hp;
+      p.hp = Math.max(0, p.hp - dmg);
+      return before - p.hp;
+    }
+    onDamagingHit(attacker, target, move, damage, crit, eff, beforeHp) {
+      if (!target || target.fainted || damage <= 0) return;
+      if (move.category === 'Physical') {
+        if (hasAbility(target, 'stamina')) this.changeStages(target, { def: 1 }, target);
+        if (hasAbility(target, 'weakarmor')) this.changeStages(target, { def: -1, spe: 2 }, target);
+      }
+      if (move.type === 'Dark' && hasAbility(target, 'justified')) this.changeStages(target, { atk: 1 }, target);
+      if (['Dark', 'Ghost', 'Bug'].includes(move.type) && hasAbility(target, 'rattled')) this.changeStages(target, { spe: 1 }, target);
+      if (move.type === 'Water' && hasAbility(target, 'watercompaction')) this.changeStages(target, { def: 2 }, target);
+      if (hasAbility(target, 'berserk') && beforeHp > target.maxHp / 2 && target.hp <= target.maxHp / 2) this.changeStages(target, { spa: 1 }, target);
+      if (crit && hasAbility(target, 'angerpoint')) { target.stages.atk = 6; this.say(`${target.name} 的愤怒穴位被击中，攻击升到了最高！`); }
+      if (hasAbility(target, 'cursedbody') && attacker && !attacker.fainted && this.rng() < 0.3) { attacker.volatile.disableMove = move.id; attacker.volatile.disableTurns = 4; this.say(`${attacker.name} 受到诅咒之躯影响，${move.name} 被定身了！`); }
+      this.checkItemTrigger(target, 'hit', { move, eff, attacker });
+      if (move.flags?.contact && attacker && !attacker.fainted) {
+        if (hasAbility(target, 'roughskin', 'ironbarbs')) this.applyDamage(attacker, Math.max(1, Math.floor(attacker.maxHp / 8)), `${attacker.name} 受到了粗糙皮肤的伤害！`);
+        if (itemId(target) === 'rockyhelmet') this.applyDamage(attacker, Math.max(1, Math.floor(attacker.maxHp / 6)), `${attacker.name} 受到了凸凸头盔的伤害！`);
+        const contactAbility = abilityId(target);
+        if (STATUS_BY_ABILITY[contactAbility] && this.rng() < 0.3) this.tryStatus(attacker, STATUS_BY_ABILITY[contactAbility], target, { fromStatusMove: false });
+        else if (contactAbility === 'effectspore' && this.rng() < 0.3) this.tryStatus(attacker, ['par', 'psn', 'slp'][Math.floor(this.rng() * 3)], target, { fromStatusMove: false });
+      }
+      if (attacker && !attacker.fainted && itemId(attacker) === 'lifeorb' && !(hasAbility(attacker, 'sheerforce') && move.secondary)) {
+        this.applyDamage(attacker, Math.max(1, Math.floor(attacker.maxHp / 10)), `${attacker.name} 被生命宝珠夺走了体力！`);
+      }
+      if (attacker && !attacker.fainted && itemId(attacker) === 'shellbell') this.heal(attacker, Math.max(1, Math.floor(damage / 8)), '贝壳之铃回复了体力');
+    }
+    movePriority(user, move, target) {
+      let prio = move.priority || 0;
+      if (hasAbility(user, 'prankster') && move.category === 'Status') prio += 1;
+      if (hasAbility(user, 'galewings') && move.type === 'Flying' && user.hp === user.maxHp) prio += 1;
+      if (hasAbility(user, 'triage') && (move.heal || move.flags?.heal)) prio += 3;
+      return prio;
+    }
 
     /* ---------- AI ---------- */
     aiAction(side) {
       const me = this.cur(side), foe = this.cur(this.other(side));
+      if (me.choiceLockedMove) {
+        const locked = me.moves.findIndex(m => m.id === me.choiceLockedMove && m.ppLeft > 0);
+        if (locked >= 0) return { kind: 'move', index: locked };
+      }
       const diff = this.difficulty;
       const mistakes = diff === 'easy' ? 0.35 : diff === 'normal' ? 0.12 : 0;
       // Consider switching when badly matched and a healthy counter exists (hard+).
@@ -147,15 +480,28 @@
       for (let i = 0; i < me.moves.length; i++) {
         const m = me.moves[i];
         if (m.ppLeft <= 0) continue;
+        if (me.volatile.disableMove === m.id) continue;
         let score;
         if (!m.basePower) {
           score = 18;
           if (m.status && !foe.status) score = 42;
           if (m.boosts && Object.values(m.boosts).some(v => v > 0)) score = me.stages.atk >= 2 ? 8 : 38;
           if (m.heal) score = me.hp < me.maxHp * 0.45 ? 55 : 4;
+          if (m.weather && !this.weather) score = 36;
+          if (m.terrain && !this.field.terrain) score = 32;
+          if (m.pseudoWeather === 'trickroom') score = effStat(me, 'spe') < effStat(foe, 'spe') ? 44 : 8;
+          if (m.sideCondition) {
+            const foeSide = this.field.sides[this.other(side)], mySide = this.field.sides[side];
+            if (['stealthrock', 'spikes', 'toxicspikes', 'stickyweb'].includes(m.sideCondition)) score = (foeSide.spikes || foeSide.stealthrock || foeSide.toxicspikes || foeSide.stickyweb) ? 10 : 38;
+            else if (m.sideCondition === 'tailwind') score = mySide.tailwind ? 8 : 30;
+            else score = me.hp > me.maxHp * 0.6 ? 32 : 12;
+          }
+          if (m.id === 'defog') score = (this.field.sides[side].spikes || this.field.sides[side].stealthrock || this.field.terrain) ? 40 : 10;
+          if (m.id === 'tidyup') score = 34;
         } else {
           const est = estimateDamage(me, foe, m);
           score = est.damage * ((m.accuracy === true ? 100 : m.accuracy || 100) / 100);
+          if (m.id === 'rapidspin' && (this.field.sides[side].spikes || this.field.sides[side].stealthrock || this.field.sides[side].toxicspikes)) score += 45;
           if (est.damage >= foe.hp) score += 120;
           score *= 0.85 + this.rng() * 0.3;
         }
@@ -181,10 +527,14 @@
       const p = this.teams[side][index];
       if (!p || p.fainted || index === this.active[side]) return false;
       const old = this.cur(side);
+      if (!old.fainted && hasAbility(old, 'regenerator')) this.heal(old, Math.floor(old.maxHp / 3), '再生力回复了体力');
+      if (!old.fainted && hasAbility(old, 'naturalcure') && old.status) { old.status = null; this.say(`${old.name} 的自然回复治愈了异常状态。`); }
       old.stages = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
       old.volatile = {};
+      old.choiceLockedMove = null;
       this.active[side] = index;
       this.say(`${side === 0 ? '我方' : '敌方'}收回了 ${old.name}，换上 ${p.name}！`);
+      this.onEnter(side);
       return true;
     }
 
@@ -192,9 +542,16 @@
     turn(playerAction) {
       if (this.winner !== null || this.pendingSwitch !== null) return [];
       const start = this.log.length;
+      for (const side of [0, 1]) if (this.cur(side)) this.cur(side)._enteredThisTurn = false;
+      let chosen = playerAction;
+      const activePlayer = this.cur(0);
+      if (chosen?.kind === 'move' && activePlayer?.choiceLockedMove) {
+        const locked = activePlayer.moves.findIndex(m => m.id === activePlayer.choiceLockedMove);
+        if (locked >= 0) chosen = { kind: 'move', index: locked };
+      }
       const foeAction = this.aiAction(1);
       const actions = [
-        { side: 0, action: playerAction },
+        { side: 0, action: chosen },
         { side: 1, action: foeAction },
       ];
       // Switches first.
@@ -202,12 +559,12 @@
       const movers = actions.filter(a => a.action.kind === 'move').map(a => {
         const p = this.cur(a.side);
         const move = p.moves[a.action.index] || p.moves[0];
-        const prio = move.priority || 0;
-        let speed = effStat(p, 'spe');
-        if (this.weather === 'sand' && p.types.includes('Rock')) speed = speed; // spd handled in calc via stats only (phase note)
+        const prio = this.movePriority(p, move, this.cur(this.other(a.side)));
+        const speed = effStat(p, 'spe');
         return { ...a, move, prio, speed, tie: this.rng() };
       });
-      movers.sort((x, y) => (y.prio - x.prio) || (y.speed - x.speed) || (x.tie - y.tie));
+      const trick = this.field.trickRoom > 0;
+      movers.sort((x, y) => (y.prio - x.prio) || (trick ? (x.speed - y.speed) || (x.tie - y.tie) : (y.speed - x.speed) || (x.tie - y.tie)));
       this.turnCount++;
       for (const m of movers) {
         if (this.winner !== null) break;
@@ -222,7 +579,8 @@
       return this.log.slice(start);
     }
 
-    canMove(p) {
+    canMove(p, move = null) {
+      if (move && p.volatile.disableMove === move.id) { this.say(`${p.name} 的 ${move.name} 被定身法封住了！`); return false; }
       if (p.status === 'slp') {
         p.sleepTurns--;
         if (p.sleepTurns > 0) { this.say(`${p.name} 正在睡觉。`); return false; }
@@ -243,72 +601,143 @@
           return false;
         }
       }
-      if (p.volatile.flinch) { delete p.volatile.flinch; this.say(`${p.name} 退缩了，无法行动！`); return false; }
+      if (p.volatile.flinch) { delete p.volatile.flinch; this.say(`${p.name} 退缩了，无法行动！`); if (hasAbility(p, 'steadfast')) this.changeStages(p, { spe: 1 }, p); return false; }
       return true;
     }
 
     useMove(side, user, target, move) {
-      if (!this.canMove(user)) return;
+      if (!this.canMove(user, move)) return;
       if (move.ppLeft > 0) move.ppLeft--;
+      if (['choiceband', 'choicespecs', 'choicescarf'].includes(itemId(user)) && !user.choiceLockedMove) user.choiceLockedMove = move.id;
       this.say(`${user.name} 使用了 ${move.name}！`);
       const selfTarget = !move.basePower && (move.heal || (move.boosts && move.target === 'self') || move.status === undefined && move.volatileStatus === undefined);
       const realTarget = (move.target === 'self' || selfTarget) ? user : target;
+      if (realTarget !== user && hasAbility(realTarget, 'pressure') && move.ppLeft > 0) move.ppLeft--;
+      const priority = this.movePriority(user, move, realTarget);
+      if (realTarget !== user && priority > 0 && hasAbility(realTarget, 'dazzling', 'queenlymajesty', 'armortail')) { this.say(`${realTarget.name} 的特性阻止了先制招式！`); return; }
+      if (realTarget !== user && priority > 0 && this.field.terrain === 'psychic' && isGrounded(realTarget)) { this.say('精神场地保护着宝可梦，先制招式失败了！'); return; }
+      if (realTarget !== user && hasAbility(user, 'prankster') && move.category === 'Status' && realTarget.types.includes('Dark')) { this.say(`对 ${realTarget.name} 没有效果……`); return; }
+      const interaction = realTarget !== user ? abilityMoveInteraction(user, realTarget, move) : null;
+      if (interaction) {
+        this.say(`${realTarget.name} 的${interaction.label}使招式没有效果！`);
+        if (interaction.kind === 'heal') this.heal(realTarget, Math.floor(realTarget.maxHp / 4), '特性回复了体力');
+        if (interaction.kind === 'boost') this.changeStages(realTarget, interaction.boosts, realTarget);
+        if (interaction.kind === 'flashfire') { realTarget.volatile.flashfire = true; this.say(`${realTarget.name} 的引火被激发了！`); }
+        return;
+      }
       // Accuracy
       let acc = move.accuracy === true || move.accuracy == null ? 100 : move.accuracy;
-      acc *= stageMult((user.stages.accuracy || 0), 'acc') * stageMult((realTarget.stages.evasion || 0), 'eva');
+      const targetEvasion = hasAbility(user, 'keeneye') ? Math.min(0, realTarget.stages.evasion || 0) : (realTarget.stages.evasion || 0);
+      acc *= stageMult((user.stages.accuracy || 0), 'acc') * stageMult(targetEvasion, 'eva');
+      if (move.category === 'Physical' && hasAbility(user, 'hustle')) acc *= 0.8;
+      if (this.field.gravity > 0) acc *= 5 / 3;
       if (this.rng() * 100 > acc) { this.say(`但是没有命中 ${realTarget.name}！`); return; }
+      if (['brickbreak', 'psychicfangs'].includes(move.id) && realTarget !== user) {
+        const sc = this.field.sides[this.sideOf(realTarget)];
+        if (sc.reflect || sc.lightscreen || sc.auroraveil) { sc.reflect = 0; sc.lightscreen = 0; sc.auroraveil = 0; this.say(`${realTarget.name} 一方的壁被打破了！`); }
+      }
 
       const hits = Array.isArray(move.multihit) ? move.multihit[0] + Math.floor(this.rng() * (move.multihit[1] - move.multihit[0] + 1)) : (move.multihit || 1);
+      let anyHit = false;
       for (let h = 0; h < hits; h++) {
         if (realTarget.fainted) break;
+        let connected = true;
         if (move.basePower) {
-          const critStage = [1 / 24, 1 / 8, 1 / 2, 1][Math.min(3, move.critRatio || 0)];
-          const crit = this.rng() < critStage;
-          const est = estimateDamage(user, realTarget, move, 0.85 + this.rng() * 0.15);
-          let dmg = est.damage;
-          if (crit) dmg = Math.floor(dmg * 1.5);
-          if (est.eff === 0) { this.say(`对 ${realTarget.name} 没有效果……`); }
+          let critStage = move.critRatio || 0;
+          if (hasAbility(user, 'superluck')) critStage += 1;
+          if (['scopelens', 'razorclaw'].includes(itemId(user))) critStage += 1;
+          const crit = !hasAbility(realTarget, 'battlearmor', 'shellarmor') && this.rng() < [1 / 24, 1 / 8, 1 / 2, 1][Math.min(3, critStage)];
+          const est = estimateDamage(user, realTarget, move, 0.85 + this.rng() * 0.15, { crit });
+          if (est.eff === 0) { this.say(`对 ${realTarget.name} 没有效果……`); connected = false; }
           else {
-            this.applyDamage(realTarget, dmg);
-            if (crit && est.eff > 0) this.say('击中了要害！');
+            anyHit = true;
+            const beforeHp = realTarget.hp;
+            let dmg = est.damage;
+            if (crit) dmg = Math.floor(dmg * (hasAbility(user, 'sniper') ? 2.25 : 1.5));
+            const dealt = this.applyMoveDamage(realTarget, dmg, user, move);
+            if (crit) this.say('击中了要害！');
             if (est.eff > 1) this.say('效果绝佳！'); else if (est.eff < 1 && est.eff > 0) this.say('效果不理想……');
+            if (dealt > 0) this.onDamagingHit(user, realTarget, move, dealt, crit, est.eff, beforeHp);
+            if (move.drain && !user.fainted) this.heal(user, Math.max(1, Math.floor(dealt * move.drain[0] / move.drain[1])), '吸取了体力');
+            if (move.recoil && !user.fainted && !hasAbility(user, 'rockhead')) this.applyDamage(user, Math.max(1, Math.floor(dealt * move.recoil[0] / move.recoil[1])), `${user.name} 受到了反作用力伤害！`);
           }
-          if (move.drain && !realTarget.fainted) this.heal(user, Math.max(1, Math.floor(dmg * move.drain[0] / move.drain[1])), '吸取了体力');
-          if (move.recoil && !user.fainted) this.applyDamage(user, Math.max(1, Math.floor(dmg * move.recoil[0] / move.recoil[1])), '受到了反作用力伤害');
-        }
-        if (hits > 1 && h === hits - 1) this.say(`击中了 ${hits} 次！`);
+        } else anyHit = true;
+        if (hits > 1 && h === hits - 1 && anyHit) this.say(`击中了 ${hits} 次！`);
         // Guaranteed move effects (on target / self)
-        if (!realTarget.fainted) this.applyEffects(user, realTarget, move, move);
+        if (connected && !realTarget.fainted) this.applyEffects(user, realTarget, move, move);
         const sec = move.secondary || (move.secondaries ? move.secondaries[0] : null);
-        if (sec && !realTarget.fainted && this.rng() * 100 < (sec.chance ?? 100)) this.applyEffects(user, realTarget, move, sec);
+        const sheer = hasAbility(user, 'sheerforce') && !!move.secondary;
+        if (connected && sec && !sheer && !hasAbility(realTarget, 'shielddust') && !realTarget.fainted) {
+          let chance = sec.chance ?? 100;
+          if (hasAbility(user, 'serenegrace')) chance *= 2;
+          if (this.rng() * 100 < chance) this.applyEffects(user, realTarget, move, sec);
+        }
         if (move.self && !user.fainted) this.applyEffects(user, user, move, move.self);
+        if (user.fainted) break;
+      }
+      if (anyHit && ['rapidspin', 'mortalspin'].includes(move.id) && !user.fainted) {
+        if (this.clearHazards(this.sideOf(user))) this.say(`${user.name} 清除了自己一方的钉子！`);
       }
       if (move.heal && !user.fainted) this.heal(user, Math.floor(user.maxHp * move.heal[0] / move.heal[1]), '回复了体力');
+      this.checkItemTrigger(user, 'pp');
     }
 
     applyEffects(user, target, move, eff) {
       if (!eff) return;
+      if (eff.self && eff !== move) this.applyEffects(user, user, move, eff.self);
+      if (eff === move) {
+        if (move.weather) this.setWeather(move.weather, 5);
+        if (move.terrain) this.setTerrain(move.terrain, 5);
+        if (move.pseudoWeather === 'trickroom') {
+          if (this.field.trickRoom > 0) { this.field.trickRoom = 0; this.say('扭曲的空间恢复了正常！'); }
+          else { this.field.trickRoom = 5; this.say('空间被扭曲了（戏法空间，速度顺序反转）！'); }
+        }
+        if (move.pseudoWeather === 'gravity') { this.field.gravity = 5; this.say('重力变得更强了！'); }
+        if (move.sideCondition) {
+          const userSide = this.sideOf(user), foeSide = this.other(userSide);
+          const scSide = move.target === 'foeSide' ? foeSide : userSide;
+          const sc = this.field.sides[scSide];
+          if (move.sideCondition === 'stealthrock' && !sc.stealthrock) { sc.stealthrock = true; this.say(`${scSide === 0 ? '我方' : '敌方'}脚下散布了隐形岩！`); }
+          if (move.sideCondition === 'spikes' && sc.spikes < 3) { sc.spikes++; this.say(`${scSide === 0 ? '我方' : '敌方'}脚下散布了撒菱（${sc.spikes}层）！`); }
+          if (move.sideCondition === 'toxicspikes' && sc.toxicspikes < 2) { sc.toxicspikes++; this.say(`${scSide === 0 ? '我方' : '敌方'}脚下散布了毒菱（${sc.toxicspikes}层）！`); }
+          if (move.sideCondition === 'stickyweb' && !sc.stickyweb) { sc.stickyweb = true; this.say(`${scSide === 0 ? '我方' : '敌方'}脚下被黏黏网覆盖！`); }
+          if (move.sideCondition === 'reflect') { sc.reflect = 5; this.say(`${scSide === 0 ? '我方' : '敌方'}被反射壁保护着！`); }
+          if (move.sideCondition === 'lightscreen') { sc.lightscreen = 5; this.say(`${scSide === 0 ? '我方' : '敌方'}被光墙保护着！`); }
+          if (move.sideCondition === 'auroraveil') {
+            if (this.weather === 'snow') { sc.auroraveil = 5; this.say(`${scSide === 0 ? '我方' : '敌方'}被极光幕保护着！`); }
+            else this.say('但是失败了（极光幕需要雪天）！');
+          }
+          if (move.sideCondition === 'tailwind') { sc.tailwind = 4; this.say(`${scSide === 0 ? '我方' : '敌方'}刮起了顺风！`); }
+        }
+        if (move.id === 'defog') {
+          this.changeStages(target, { evasion: -1 }, user);
+          let removed = false;
+          for (const sd of [0, 1]) { removed = this.clearHazards(sd) || removed; const sc = this.field.sides[sd]; if (sc.reflect || sc.lightscreen || sc.auroraveil) { sc.reflect = 0; sc.lightscreen = 0; sc.auroraveil = 0; removed = true; } }
+          if (this.field.terrain) { this.field.terrain = null; this.field.terrainTurns = 0; removed = true; }
+          if (removed) this.say('场上的钉子、壁与场地被清除了！');
+        }
+        if (move.id === 'tidyup') {
+          for (const sd of [0, 1]) this.clearHazards(sd);
+          this.say('场上的钉子被打扫干净了！');
+          this.changeStages(user, { atk: 1, spe: 1 }, user);
+        }
+        if (move.id === 'courtchange') { const tmp = this.field.sides[0]; this.field.sides[0] = this.field.sides[1]; this.field.sides[1] = tmp; this.say('双方交换了场地效果！'); }
+      }
       if (eff.status) {
         const who = eff.target === 'self' ? user : target;
-        if (!who.status && !who.fainted) {
-          if (eff.status === 'tox') { who.status = 'tox'; who.toxicCounter = 1; }
-          else who.status = eff.status;
-          if (eff.status === 'slp') who.sleepTurns = 1 + Math.floor(this.rng() * 3);
-          this.say(`${who.name} ${STATUS_NAMES[who.status] ? '陷入了' + STATUS_NAMES[who.status] + '状态！' : '状态变化了！'}`);
-        }
+        this.tryStatus(who, eff.status, user, { fromStatusMove: move.category === 'Status' && eff === move });
       }
       if (eff.volatileStatus === 'confusion' && !target.fainted && target !== user) {
-        target.volatile.confusion = 2 + Math.floor(this.rng() * 4);
-        this.say(`${target.name} 混乱了！`);
+        if (hasAbility(target, 'owntempo')) this.say(`${target.name} 的我行我素使其不会混乱！`);
+        else { target.volatile.confusion = 2 + Math.floor(this.rng() * 4); this.say(`${target.name} 混乱了！`); this.checkItemTrigger(target, 'confusion'); }
       }
-      if (eff.volatileStatus === 'flinch' && !target.fainted && target !== user) target.volatile.flinch = true;
+      if (eff.volatileStatus === 'flinch' && !target.fainted && target !== user) {
+        if (hasAbility(target, 'innerfocus')) this.say(`${target.name} 的精神力使其不会退缩！`);
+        else target.volatile.flinch = true;
+      }
       if (eff.boosts) {
         const who = eff === move.self || eff.target === 'self' ? user : target;
-        for (const [k, v] of Object.entries(eff.boosts)) {
-          if (!(k in who.stages)) continue;
-          who.stages[k] = clampStage((who.stages[k] || 0) + v);
-          this.say(`${who.name} 的 ${k} ${v > 0 ? '提升了' : '降低了'}！`);
-        }
+        this.changeStages(who, eff.boosts, who === user ? user : user);
       }
     }
 
@@ -330,7 +759,7 @@
           this.say(`${p.name} 失去了战斗能力！`);
           if (side === 1 && this.alive(1).length) {
             const idx = this.bestSwitch(1);
-            if (idx >= 0) { this.active[1] = idx; this.say(`敌方换上了 ${this.cur(1).name}！`); }
+            if (idx >= 0) { this.active[1] = idx; this.say(`敌方换上了 ${this.cur(1).name}！`); this.onEnter(1); if (this.cur(1).hp <= 0 && !this.cur(1).fainted) this.checkFaints(); }
           } else if (side === 0 && this.alive(0).length) {
             this.pendingSwitch = 0;
           }
@@ -342,6 +771,7 @@
       if (this.pendingSwitch !== 0) return false;
       if (!this.doSwitch(0, index)) return false;
       this.pendingSwitch = null;
+      this.checkFaints();
       this.updateWinner();
       return true;
     }
@@ -349,13 +779,50 @@
       for (const side of [0, 1]) {
         const p = this.cur(side);
         if (!p || p.fainted) continue;
-        if (p.status === 'brn') this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 16)), `${p.name} 受到了灼伤的伤害！`);
-        if (p.status === 'psn') this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 8)), `${p.name} 受到了毒的伤害！`);
-        if (p.status === 'tox') { this.applyDamage(p, Math.max(1, Math.floor(p.maxHp * p.toxicCounter / 16)), `${p.name} 受到了剧毒的伤害！`); p.toxicCounter++; }
-        if (this.weather === 'sand' && !['Rock', 'Ground', 'Steel'].some(t => p.types.includes(t))) this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 16)), `${p.name} 受到了沙暴的伤害！`);
+        const ab = abilityId(p);
+        if (this.field.terrain === 'grassy' && isGrounded(p)) this.heal(p, Math.floor(p.maxHp / 16), '青草场地回复了体力');
+        if (this.weather === 'rain' && ab === 'raindish') this.heal(p, Math.floor(p.maxHp / 16), '雨盘回复了体力');
+        if (this.weather === 'snow' && ab === 'icebody') this.heal(p, Math.floor(p.maxHp / 16), '冰冻之躯回复了体力');
+        if (ab === 'dryskin') {
+          if (this.weather === 'rain') this.heal(p, Math.floor(p.maxHp / 8), '干燥皮肤回复了体力');
+          if (this.weather === 'sun') this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 8)), `${p.name} 受到了干燥皮肤的伤害！`);
+        }
+        if (this.weather === 'sand' && !['Rock', 'Ground', 'Steel'].some(t => p.types.includes(t)) && !hasAbility(p, 'sandveil', 'sandrush', 'sandforce', 'overcoat')) {
+          this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 16)), `${p.name} 受到了沙暴的伤害！`);
+        }
+        if (this.weather === 'sun' && ab === 'solarpower') this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 8)), `${p.name} 受到了太阳之力的反作用！`);
+        if (p.status === 'brn') this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / (hasAbility(p, 'heatproof') ? 32 : 16))), `${p.name} 受到了灼伤的伤害！`);
+        if (p.status === 'psn' || p.status === 'tox') {
+          if (ab === 'poisonheal') this.heal(p, Math.floor(p.maxHp / 8), '毒疗回复了体力');
+          else if (p.status === 'psn') this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 8)), `${p.name} 受到了毒的伤害！`);
+          else { this.applyDamage(p, Math.max(1, Math.floor(p.maxHp * p.toxicCounter / 16)), `${p.name} 受到了剧毒的伤害！`); p.toxicCounter++; }
+        }
+        if (p.status && ab === 'shedskin' && this.rng() < 0.3) { p.status = null; this.say(`${p.name} 蜕皮治愈了异常状态！`); }
+        if (p.status && ab === 'hydration' && this.weather === 'rain') { p.status = null; this.say(`${p.name} 的湿润之躯治愈了异常状态！`); }
+        if (!p.fainted && ab === 'speedboost' && !p._enteredThisTurn) this.changeStages(p, { spe: 1 }, p);
+        if (!p.fainted && itemId(p) === 'leftovers') this.heal(p, Math.floor(p.maxHp / 16), '剩饭回复了体力');
+        if (!p.fainted && itemId(p) === 'blacksludge') {
+          if (p.types.includes('Poison')) this.heal(p, Math.floor(p.maxHp / 16), '黑色污泥回复了体力');
+          else this.applyDamage(p, Math.max(1, Math.floor(p.maxHp / 8)), `${p.name} 受到了黑色污泥的伤害！`);
+        }
+        if (!p.fainted && !p.status && itemId(p) === 'flameorb') this.tryStatus(p, 'brn', p, { fromStatusMove: false });
+        if (!p.fainted && !p.status && itemId(p) === 'toxicorb') this.tryStatus(p, 'tox', p, { fromStatusMove: false });
+        this.checkItemTrigger(p, 'end');
+      }
+      for (const side of [0, 1]) { const p = this.cur(side); if (p?.volatile.disableTurns > 0 && --p.volatile.disableTurns === 0) delete p.volatile.disableMove; }
+      // Field duration ticks.
+      if (this.field.terrain && --this.field.terrainTurns <= 0) { this.field.terrain = null; this.field.terrainTurns = 0; this.say('场地恢复了正常。'); }
+      if (this.field.trickRoom > 0 && --this.field.trickRoom === 0) this.say('扭曲的空间恢复了正常。');
+      if (this.field.gravity > 0) this.field.gravity--;
+      for (const sc of this.field.sides) {
+        if (sc.reflect > 0 && --sc.reflect === 0) this.say('反射壁消失了。');
+        if (sc.lightscreen > 0 && --sc.lightscreen === 0) this.say('光墙消失了。');
+        if (sc.auroraveil > 0 && --sc.auroraveil === 0) this.say('极光幕消失了。');
+        if (sc.tailwind > 0 && --sc.tailwind === 0) this.say('顺风停了。');
       }
       if (this.weatherTurns > 0 && --this.weatherTurns === 0) { this.say('天气恢复了正常。'); this.weather = null; }
     }
+
     updateWinner() {
       if (this.alive(1).length === 0) { this.winner = 0; this.pendingSwitch = null; this.say('战斗胜利！'); }
       else if (this.alive(0).length === 0) { this.winner = 1; this.say('眼前一片漆黑……'); }
@@ -364,14 +831,16 @@
       return {
         winner: this.winner === null ? null : (this.winner === 0 ? 'player' : 'enemy'),
         turns: this.turnCount,
-        playerTeam: this.teams[0].map(p => ({ species: p.speciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted })),
-        enemyTeam: this.teams[1].map(p => ({ species: p.speciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted })),
+        weather: this.weather,
+        field: JSON.parse(JSON.stringify(this.field)),
+        playerTeam: this.teams[0].map(p => ({ species: p.speciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted, status: p.status, ability: p.ability, item: p.item })),
+        enemyTeam: this.teams[1].map(p => ({ species: p.speciesId, hp: p.hp, maxHp: p.maxHp, fainted: p.fainted, status: p.status, ability: p.ability, item: p.item })),
         log: this.log.slice(),
       };
     }
   }
 
-  const api = { setData, createPokemon, calcStats, effStat, estimateDamage, Battle, normId, STATUS_NAMES };
+  const api = { setData, createPokemon, calcStats, effStat, estimateDamage, Battle, normId, STATUS_NAMES, abilityId, itemId, isGrounded };
   root.PKMBattle = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
