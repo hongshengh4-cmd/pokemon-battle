@@ -23,6 +23,19 @@ test('All shipped body anchors are valid normalized coordinates',()=>{
  for(const e of Object.values(entries))for(const side of ['front','back'])if(e[side+'Body']){assert.ok(e[side+'Body'].length===2&&e[side+'Body'].every(x=>Number.isFinite(x)&&x>=0&&x<=1));count++;}
  assert.ok(count>=18);
 });
+// v0.9.5: mouth anchors (move-effect origins) ship for (almost) every sprite and sit on the facing side of the body core.
+test('Shipped mouth anchors: valid, near-complete, on the facing side of the body, hand-checked overrides applied',()=>{
+ const data=JSON.parse(fs.readFileSync(new URL('../src/data/sprite-map.json',import.meta.url)));
+ const entries=data.entries,overrides=JSON.parse(fs.readFileSync(new URL('../tools/mouth-overrides.json',import.meta.url)));
+ let total=0,withMouth=0,facing=0,compared=0;
+ for(const e of Object.values(entries))for(const side of ['front','back']){if(!e[side])continue;total++;const m=e[side+'Mouth'];if(!m)continue;withMouth++;
+  assert.ok(m.length===2&&m.every(x=>Number.isFinite(x)&&x>=0&&x<=1),`mouth anchor out of range: ${JSON.stringify(m)}`);
+  const b=e[side+'Body'];if(b){compared++;if(side==='back'?m[0]>b[0]:m[0]<b[0])facing++;}}
+ assert.ok(withMouth/total>=.99,`mouth anchors cover ${withMouth}/${total}`);
+ assert.ok(facing/compared>=.97,`mouth on the facing side of the body for ${facing}/${compared}`);
+ for(const [id,sides] of Object.entries(overrides)){if(id.startsWith('_'))continue;for(const [side,point] of Object.entries(sides))assert.deepEqual(entries[id][side+'Mouth'],point,`${id} ${side} override applied`);}
+ assert.match(String(data.mouthAnchorMethod||''),/mouth/i);
+});
 test('Desktop Mega is 111px (previously 74px)',()=>near(iconSize(320,'mega'),111));
 test('Mobile Mega is 1.5x previous responsive size',()=>near(iconSize(138,'mega'),138*.24*1.5));
 test('Z icon cap is 159px',()=>near(iconSize(1000,'z'),159));

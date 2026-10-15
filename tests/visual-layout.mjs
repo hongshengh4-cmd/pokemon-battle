@@ -1,4 +1,4 @@
-// Layout acceptance for v0.9.1/v0.9.2: compact command deck, taller arena, sprite never covers the enemy card,
+// Layout acceptance for v0.9.1–v0.9.5: compact command deck, taller arena, sprite never covers the enemy card, move effects leave from the mouth anchor,
 // the move panel stays open after a move, and the battle mechanic is an item next to the player's HP card. Usage: node tests/visual-layout.mjs [baseUrl] [outputDir]
 import {chromium} from 'playwright';
 import fs from 'node:fs';
@@ -87,6 +87,37 @@ await page.goto(url(cfg(3,{p1:{entrants:[{name:'player',party:[{name:'charizard'
 const mItem=await rect('#mechanics button'),mPCard=await rect('.fighter.player .fighter-info'),mSprite=await rect('#p-sprite'),mArena=await rect('.arena');assert.ok(mItem,'mobile item rendered');
 assert.ok(mItem.right<=mPCard.left+1&&mItem.left>=mSprite.right-1,`mobile item not between sprite and card: ${JSON.stringify({mItem,mPCard,mSprite})}`);assert.ok(mItem.bottom<=mArena.bottom+1&&mItem.width>=40&&mItem.width<=56,'mobile item size/placement');await shot('13-item-mobile');
 await page.locator('#mechanics button').click();await page.waitForTimeout(120);assert.equal(await page.getAttribute('#mechanics button','data-state'),'armed');assert.equal(await page.locator('#moves').isVisible(),true);pass('Mobile: item fits between sprite and card and still arms the mechanic');
+// v0.9.5: ranged move effects leave from the attacker's mouth (measured anchor), not the sprite box centre, and end on the target's body.
+await page.setViewportSize({width:1366,height:720});
+const spriteMap=JSON.parse(fs.readFileSync(path.join(root,'src/data/sprite-map.json'),'utf8')).entries;
+assert.ok(spriteMap.charizard.backMouth&&spriteMap.gyarados.frontMouth,'mouth anchors present in sprite-map.json');
+await page.goto(url({seed:5,difficulty:'normal',p1:{entrants:[{name:'player',party:[{name:'charizard',lv:75,moves:['flamethrower','dragonpulse']}]}]},p2:{entrants:[{name:'enemy',party:[{name:'gyarados',lv:55,moves:['hydropump']}]}]}}));await waitReady();await settle();
+const anchorPoint=(sel,anchor)=>page.evaluate(([s,a])=>{const img=document.querySelector(s+'>img');const r=img.getBoundingClientRect(),st=document.querySelector('.arena').getBoundingClientRect();const p=PKMSpriteAnchor.project({rect:r,width:img.clientWidth,height:img.clientHeight,naturalWidth:img.naturalWidth,naturalHeight:img.naturalHeight,anchor:a,flip:parseFloat(getComputedStyle(img).getPropertyValue('--flip'))<0});return {x:p.x,y:p.y,arenaLeft:st.left,arenaTop:st.top};},[sel,anchor]);
+await page.evaluate(()=>{window.__fx=[];new MutationObserver(ms=>{for(const m of ms)for(const n of m.addedNodes){if(n.nodeType===1&&(n.classList.contains('fx-p')||n.classList.contains('fx-beam')))window.__fx.push({cls:n.className,left:parseFloat(n.style.left),top:parseFloat(n.style.top),at:performance.now()});}}).observe(document.querySelector('.arena'),{childList:true});});
+const pMouth=await anchorPoint('#p-sprite',spriteMap.charizard.backMouth),eMouth=await anchorPoint('#e-sprite',spriteMap.gyarados.frontMouth),pDrawn=await drawn('#p-sprite'),eDrawn=await drawn('#e-sprite'),pBox=await rect('#p-sprite'),eBox=await rect('#e-sprite');
+await page.locator('#command-fight').click();await page.locator('#moves button').first().click();await waitIdle();await page.waitForTimeout(300);
+const fx=await page.evaluate(()=>window.__fx);const flames=fx.filter(f=>/\bflame\b/.test(f.cls)),bubbles=fx.filter(f=>/\bbubble\b/.test(f.cls));
+assert.ok(flames.length>=10,`flamethrower particles recorded: ${flames.length}`);assert.ok(bubbles.length>=8,`hydro pump particles recorded: ${bubbles.length}`);
+const near=(f,m)=>Math.hypot(f.left+m.arenaLeft-m.x,f.top+m.arenaTop-m.y);
+const inside=(f,m,d,pad=8)=>f.left+m.arenaLeft>=d.left-pad&&f.left+m.arenaLeft<=d.right+pad&&f.top+m.arenaTop>=d.top-pad&&f.top+m.arenaTop<=d.bottom+pad;
+console.log('flame spawn',flames[0],'expected mouth',{x:Math.round(pMouth.x-pMouth.arenaLeft),y:Math.round(pMouth.y-pMouth.arenaTop)},'box centre',{x:Math.round(pBox.left+pBox.width/2-pMouth.arenaLeft),y:Math.round(pBox.top+pBox.height/2-pMouth.arenaTop)});
+for(const f of flames.slice(0,5))assert.ok(near(f,pMouth)<=4,`flame spawns at Charizard's mouth anchor (off by ${near(f,pMouth).toFixed(1)}px)`);
+assert.ok(inside(flames[0],pMouth,pDrawn)&&flames[0].left+pMouth.arenaLeft>=(pDrawn.left+pDrawn.right)/2&&flames[0].top+pMouth.arenaTop<=(pDrawn.top+pDrawn.bottom)/2,`flame origin is in the head half of the drawn back sprite: ${JSON.stringify({flame:flames[0],pDrawn})}`);
+assert.ok(Math.hypot(flames[0].left+pMouth.arenaLeft-(pBox.left+pBox.width/2),flames[0].top+pMouth.arenaTop-(pBox.top+pBox.height/2))>30,'flame origin is not the sprite box centre');
+console.log('bubble spawn',bubbles[0],'expected mouth',{x:Math.round(eMouth.x-eMouth.arenaLeft),y:Math.round(eMouth.y-eMouth.arenaTop)});
+// The enemy casts while its own hit-shake is still running, so its anchor follows the displaced sprite (a few px).
+for(const f of bubbles.slice(0,5))assert.ok(near(f,eMouth)<=12,`hydro pump spawns at Gyarados's mouth anchor (off by ${near(f,eMouth).toFixed(1)}px)`);
+assert.ok(inside(bubbles[0],eMouth,eDrawn)&&bubbles[0].left+eMouth.arenaLeft<=(eDrawn.left+eDrawn.right)/2,`hydro pump origin is on the facing (left) half of the drawn front sprite: ${JSON.stringify({bubble:bubbles[0],eDrawn})}`);
+assert.ok(Math.hypot(bubbles[0].left+eMouth.arenaLeft-(eBox.left+eBox.width/2),bubbles[0].top+eMouth.arenaTop-(eBox.top+eBox.height/2))>30,'hydro pump origin is not the sprite box centre');
+await shot('14-fx-origin');pass('Ranged move effects start at the attacker\'s mouth anchor (Charizard back / Gyarados front), not the box centre');
+// Dragon Pulse: the beam starts at the mouth too and points at the target's body anchor.
+await page.evaluate(()=>{window.__fx=[];});await page.locator('#moves button').nth(1).click();await waitIdle();await page.waitForTimeout(300);
+const beams=(await page.evaluate(()=>window.__fx)).filter(f=>/fx-beam/.test(f.cls)&&/dragon/.test(f.cls));assert.ok(beams.length>=1,'dragon pulse beam recorded');
+const eBody=await anchorPoint('#e-sprite',spriteMap.gyarados.frontBody);
+const beamTopOffset=5;const beamStart={left:beams[0].left,top:beams[0].top+beamTopOffset};console.log('beam start',beamStart);
+assert.ok(near(beamStart,pMouth)<=4,`dragon pulse beam starts at the mouth (off by ${near(beamStart,pMouth).toFixed(1)}px)`);
+assert.ok(Math.hypot(eBody.x-pMouth.x,eBody.y-pMouth.y)>100,'beam has a target far from the mouth');
+pass('Dragon Pulse beam is anchored at the mouth');
 assert.deepEqual(errors,[]);
 fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({passed:results,errors},null,2));
 console.log(`Layout checks: ${results.length} passed.`);

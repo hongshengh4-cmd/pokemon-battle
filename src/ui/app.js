@@ -12,6 +12,7 @@
   let SPRITE_FEET = {};
   let SPRITE_FEETX = {};
   let SPRITE_BODY = {};
+  let SPRITE_MOUTH = {}; // v0.9.5: 嘴部锚点（离线测量，tools/measure-mouth-anchors.py）
   let textPairs = [], speciesZhToId = {}, textMap = new Map(), textRegex = null;
   const zhType = t => ZH.types?.[t] || PKMMechanics.TYPE_ZH[t] || t || '无属性';
   const zhCat = c => ZH.categories?.[c] || ({ Physical: '物理', Special: '特殊', Status: '变化' }[c] || c || '变化');
@@ -244,6 +245,23 @@
     box.appendChild(fx);
     setTimeout(() => fx.remove(), ttl);
   }
+  // v0.9.5: 命中闪光落在目标的身体锚点上（而不是精灵框的固定位置），与远程特效的终点一致
+  function addImpact(side, ttl = 650) {
+    const box = spriteEl(side);
+    if (!box) return;
+    const fx = document.createElement('div');
+    fx.className = 'fx fx-impact';
+    fx.setAttribute('aria-hidden', 'true');
+    const point = spritePoint(side, 'body');
+    if (point && point.kind === 'body') {
+      const br = box.getBoundingClientRect(), stage = point.arena.getBoundingClientRect();
+      const sx = br.width / (box.offsetWidth || 1) || 1, sy = br.height / (box.offsetHeight || 1) || 1;
+      fx.style.left = `${(point.x + stage.left - br.left) / sx - box.clientLeft}px`;
+      fx.style.top = `${(point.y + stage.top - br.top) / sy - box.clientTop}px`;
+    }
+    box.appendChild(fx);
+    setTimeout(() => fx.remove(), ttl);
+  }
   function showBanner(text, className = '') {
     const arena = document.querySelector('.arena');
     if (!arena || !text) return;
@@ -417,19 +435,18 @@
     showMechanicIcon(side, 'z', 1020);
     showBanner('Ｚ招式！', 'fx-z-banner');
   }
-  function showBeam(fromSide, type = 'Normal', big = false) {
-    const arena = document.querySelector('.arena');
-    const from = spriteEl(fromSide), to = spriteEl(fromSide === 0 ? 1 : 0);
-    if (!arena || !from || !to) return;
-    const stage = arena.getBoundingClientRect();
-    const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
-    const x1 = a.left + a.width / 2 - stage.left, y1 = a.top + a.height / 2 - stage.top;
-    const x2 = b.left + b.width / 2 - stage.left, y2 = b.top + b.height / 2 - stage.top;
+  function showBeam(fromSide, type = 'Normal', big = false, points = null) {
+    // v0.9.5: 光束从攻击方的嘴部（或身体）射向对方身体，而不是精灵框中心连线
+    const from = points?.from || spritePoint(fromSide, fxOriginKind({ type }));
+    const to = points?.to || spritePoint(fromSide === 0 ? 1 : 0, 'body');
+    if (!from || !to) return;
+    const arena = from.arena;
+    const x1 = from.x, y1 = from.y, x2 = to.x, y2 = to.y;
     const dx = x2 - x1, dy = y2 - y1;
     const beam = document.createElement('div');
     beam.className = `fx-beam type-${String(type || 'Normal').toLowerCase()}${big ? ' fx-beam-big' : ''}`;
     beam.style.left = `${x1}px`;
-    beam.style.top = `${y1}px`;
+    beam.style.top = `${y1 - (big ? 9.5 : 5)}px`; // 光束厚度的一半，让光束中心线正好穿过嘴部
     beam.style.width = `${Math.hypot(dx, dy)}px`;
     beam.style.transform = `rotate(${Math.atan2(dy, dx) * 180 / Math.PI}deg)`;
     arena.appendChild(beam);
@@ -458,12 +475,36 @@
     Stellar: { travel: 'proj', shape: 'star', colors: ['#fef08a', '#f472b6', '#0284c7'] },
   };
   const fxRand = (a, b) => a + Math.random() * (b - a);
-  function arenaPoint(side) {
+  /* v0.9.5: 技能特效的起点/终点取自精灵本体上的锚点，而不是精灵框（345×320 网格格子）的中心。
+     - 'mouth'：嘴部锚点（离线用 tools/measure-mouth-anchors.py 测量，写入 sprite-map.json 的 frontMouth/backMouth）
+     - 'body' ：身体核心锚点（与捕捉/机制图标共用的 frontBody/backBody）
+     锚点是 GIF 画布的比例坐标，PKMSpriteAnchor.project 会把 object-fit 留白、缩放、位移和 --flip 一并算进去。 */
+  const MOUTH_TYPES = new Set(['Fire', 'Water', 'Ice', 'Dragon', 'Normal', 'Poison', 'Steel']);
+  const fxOriginKind = move => (MOUTH_TYPES.has(move?.type) ? 'mouth' : 'body');
+  const isBackSpriteUrl = url => /-back\//.test(String(url || ''));
+  function spriteAnchor(url, kind) {
+    const body = SPRITE_BODY[url] || [.5, .5];
+    if (kind !== 'mouth') return body;
+    if (Array.isArray(SPRITE_MOUTH[url])) return SPRITE_MOUTH[url];
+    // 未测量的图：头部通常在身体核心的斜上方、朝向对手的一侧
+    const back = isBackSpriteUrl(url);
+    return [Math.max(0, Math.min(1, body[0] + (back ? .2 : -.15))), Math.max(0, body[1] - .25)];
+  }
+  function spritePoint(side, kind = 'body') {
     const arena = document.querySelector('.arena');
     const el = spriteEl(side);
     if (!arena || !el) return null;
     const stage = arena.getBoundingClientRect(), r = el.getBoundingClientRect();
-    return { arena, x: r.left + r.width / 2 - stage.left, y: r.top + r.height / 2 - stage.top, w: arena.clientWidth, h: arena.clientHeight };
+    const base = { arena, w: arena.clientWidth, h: arena.clientHeight };
+    const boxCenter = { ...base, kind: 'box', x: r.left + r.width / 2 - stage.left, y: r.top + r.height / 2 - stage.top };
+    const img = el.querySelector('img');
+    if (!img || !img.naturalWidth || !img.clientWidth) return boxCenter;
+    const url = img.currentSrc || img.src;
+    const point = PKMSpriteAnchor.project({ rect: img.getBoundingClientRect(), width: img.clientWidth, height: img.clientHeight,
+      naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, anchor: spriteAnchor(url, kind),
+      flip: parseFloat(getComputedStyle(img).getPropertyValue('--flip')) < 0 });
+    if (!point) return boxCenter;
+    return { ...base, kind, x: point.x - stage.left, y: point.y - stage.top };
   }
   function spawnP(arena, x, y, o) {
     const p = document.createElement('span');
@@ -496,7 +537,8 @@
     const cfg = TYPE_FX[move.type] || TYPE_FX.Normal;
     const targetSelf = /self|ally|field/.test(move.target || '') || move.target === 'all';
     const foeSide = fromSide === 0 ? 1 : 0;
-    const from = arenaPoint(fromSide), to = arenaPoint(targetSelf ? fromSide : foeSide);
+    // 远程特效从嘴部（火/水/冰/龙/一般/毒/钢）或身体（其余属性）发出，终点是目标的身体核心
+    const from = spritePoint(fromSide, fxOriginKind(move)), to = spritePoint(targetSelf ? fromSide : foeSide, 'body');
     if (!from || !to) return;
     const arena = from.arena;
     const dx = to.x - from.x, dy = to.y - from.y;
@@ -520,7 +562,7 @@
         const n = big ? 22 : 15;
         for (let i = 0; i < n; i++) {
           const t = 0.25 + 0.75 * (i / n) + fxRand(-0.05, 0.05);
-          spawnP(arena, from.x, from.y - 6, { shape: 'flame', colors: cfg.colors, size: fxRand(19, 36) * (big ? 1.35 : 1), dx: dx * t + fxRand(-14, 14), dy: dy * t + fxRand(-20, 4), dur: fxRand(0.34, 0.5), delay: i * 21, s: fxRand(0.8, 1.25) });
+          spawnP(arena, from.x, from.y, { shape: 'flame', colors: cfg.colors, size: fxRand(19, 36) * (big ? 1.35 : 1), dx: dx * t + fxRand(-14, 14), dy: dy * t + fxRand(-20, 4), dur: fxRand(0.34, 0.5), delay: i * 21, s: fxRand(0.8, 1.25) });
         }
         burstLater(big ? 420 : 330);
         break;
@@ -573,7 +615,7 @@
         break;
       }
       case 'beam': {
-        showBeam(fromSide, move.type, big);
+        showBeam(fromSide, move.type, big, { from, to });
         const n = big ? 10 : 7;
         for (let i = 0; i < n; i++) spawnP(arena, from.x, from.y, { colors: cfg.colors, size: fxRand(9, 15) * (big ? 1.3 : 1), dx: dx * fxRand(0.55, 1), dy: dy * fxRand(0.55, 1) + fxRand(-12, 12), dur: fxRand(0.4, 0.55), delay: i * 30 });
         burstLater(330);
@@ -684,13 +726,13 @@
           playMechanicCharge(0, chosen.type);
           setTimeout(() => {
             playMoveFx(0, chosen, { big: true });
-            if (foeDamaged) setTimeout(() => { animateImg(1, 'fx-hit', 720); addFx(1, 'fx-impact', '', 650); }, 340);
+            if (foeDamaged) setTimeout(() => { animateImg(1, 'fx-hit', 720); addImpact(1); }, 340);
           }, 980);
         } else {
           if (chosen.category === 'Physical') animateImg(0, 'fx-attack', 680);
           else castImg(0, chosen.type);
           playMoveFx(0, chosen);
-          if (foeDamaged) setTimeout(() => { animateImg(1, 'fx-hit', 720); addFx(1, 'fx-impact', '', 650); }, 330);
+          if (foeDamaged) setTimeout(() => { animateImg(1, 'fx-hit', 720); addImpact(1); }, 330);
         }
       }, at);
       delay = at + (isZ ? 1500 : 470);
@@ -710,7 +752,7 @@
         if (mv.category === 'Physical') animateImg(1, 'fx-attack', 680);
         else castImg(1, mv.type);
         playMoveFx(1, mv);
-        if (meDamaged) setTimeout(() => { animateImg(0, 'fx-hit', 720); addFx(0, 'fx-impact', '', 650); }, 330);
+        if (meDamaged) setTimeout(() => { animateImg(0, 'fx-hit', 720); addImpact(0); }, 330);
       }, at);
       delay = at + 360;
     }
@@ -1395,16 +1437,17 @@
       fetch('./src/data/moves.json?v=0.9.0').then(r => r.json()),
       fetch('./src/data/learnsets.json?v=0.9.0').then(r => r.json()),
       fetch('./src/data/zh-names.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('./src/data/sprite-map.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/sprite-map.json?v=0.9.5').then(r => r.ok ? r.json() : {}).catch(() => ({})),
     ]);
     ZH = zh || {};
     SPRITES = spriteMap?.entries || {};
     SPRITE_FEET = {};
     SPRITE_FEETX = {};
     SPRITE_BODY = {};
+    SPRITE_MOUTH = {};
     for (const e of Object.values(SPRITES)) {
-      if (e.front) { SPRITE_FEET[e.front] = e.frontFeet; SPRITE_FEETX[e.front] = e.frontFeetX; SPRITE_BODY[e.front] = e.frontBody; }
-      if (e.back) { SPRITE_FEET[e.back] = e.backFeet; SPRITE_FEETX[e.back] = e.backFeetX; SPRITE_BODY[e.back] = e.backBody; }
+      if (e.front) { SPRITE_FEET[e.front] = e.frontFeet; SPRITE_FEETX[e.front] = e.frontFeetX; SPRITE_BODY[e.front] = e.frontBody; SPRITE_MOUTH[e.front] = e.frontMouth; }
+      if (e.back) { SPRITE_FEET[e.back] = e.backFeet; SPRITE_FEETX[e.back] = e.backFeetX; SPRITE_BODY[e.back] = e.backBody; SPRITE_MOUTH[e.back] = e.backMouth; }
     }
     PKMBattle.setData(dex, moves);
     PKMTeam.setData(dex, moves, learnsets);
