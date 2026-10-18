@@ -1,12 +1,12 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.2
+// 宝可梦·关都之旅 · 外置桥接 v1.3.5
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.2');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.5');
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
 //       战斗结果写回 MVU 变量、生成前注入“剧情节点 + 变量摘要”、在场人物同步“已结识”。
-import * as K from './kanto-data.js?v=1.3.2';
+import * as K from './kanto-data.js?v=1.3.5';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -76,7 +76,9 @@ const zhReady = fetch(BASE + 'src/data/zh-names.json?v=' + VERSION).then(r => (r
   if (!z) return;
   const rev = {};
   for (const [id, name] of Object.entries(z.species || {})) if (name && !rev[name]) rev[name] = id;
-  ZH = { ...z, speciesRev: rev };
+  const mrev = {};
+  for (const [id, name] of Object.entries(z.moves || {})) if (name && !mrev[name]) mrev[name] = id;
+  ZH = { ...z, speciesRev: rev, movesRev: mrev };
   refreshAll();
 }).catch(e => LOG('中文名表加载失败（不影响主要功能）', e));
 const speciesId = name => { const n = String(name || '').trim(); if (!n) return ''; if (ZH?.speciesRev?.[n]) return ZH.speciesRev[n]; const id = n.toLowerCase().replace(/[^a-z0-9]/g, ''); return ZH?.species?.[id] ? id : (ZH ? '' : id); };
@@ -94,6 +96,123 @@ function itemIcon(name) {
   const slug = K.ITEM_ICONS[name];
   const emoji = (K.ITEM_EMOJI.find(([re]) => re.test(name)) || [null, '🎒'])[1];
   return slug ? `<img class="pk-item" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/${slug}.png" alt="" loading="lazy" onerror="this.replaceWith(document.createTextNode('${emoji}'))">` : `<span class="pk-item-e">${emoji}</span>`;
+}
+
+/* ---------- v1.3.4：个体值 / 性格 / 能力值 / 招式 PP / 叫声 ---------- */
+let STATS = null;
+fetch(BASE + 'st-bridge/kanto-stats.json?v=' + VERSION).then(r => (r.ok ? r.json() : null)).then(j => { if (j?.s) { STATS = j; refreshAll(); } }).catch(e => LOG('能力值表加载失败（不影响主要功能）', e));
+const AVS_KEYS = Object.keys(K.AVS_ZH);
+const AVS_MAX = 100;
+const ivOk = v => Number.isInteger(v) && v >= 0 && v <= 31;
+// 性格统一成中文名；英文 id（adamant）在中文名表加载后换算，加载前原样保留
+function natureZh(n) {
+  const s = String(n ?? '').trim(); if (!s) return null;
+  if (K.NATURES.includes(s)) return s;
+  const z = ZH?.natures?.[s.toLowerCase().replace(/[^a-z]/g, '')];
+  return z && K.NATURES.includes(z) ? z : null;
+}
+function qualityOf(iv) {
+  const vals = K.STAT_KEYS.map(k => Number(iv?.[k]) || 0);
+  const sum = vals.reduce((a, b) => a + b, 0), top = vals.filter(v => v === 31).length;
+  return sum >= 160 || top >= 4 ? 'perfect' : sum >= 115 ? 'high' : sum >= 65 ? 'medium' : 'low';
+}
+function rollIvs(quality, rand = Math.random) {
+  const [lo, hi] = K.IV_BAND[quality] || [0, 31];
+  const iv = {}; for (const k of K.STAT_KEYS) iv[k] = lo + Math.floor(rand() * (hi - lo + 1));
+  if (quality === 'perfect') K.STAT_KEYS.slice().sort(() => rand() - 0.5).slice(0, 3).forEach(k => { iv[k] = 31; });
+  return iv;
+}
+const rollNature = (rand = Math.random) => K.NATURES[Math.floor(rand() * K.NATURES.length)];
+// 每只宝可梦第一次进入变量时定下个体值与性格（之后固定不变）；AI 写进来的缺项也会补齐
+function ensureIndividual(mon, rand = Math.random) {
+  if (!hasMon(mon)) return false;
+  let ch = false;
+  if (!isObj(mon.stats_meta)) { mon.stats_meta = { ivs: {}, ev_level: 0 }; ch = true; }
+  if (!isObj(mon.stats_meta.ivs)) { mon.stats_meta.ivs = {}; ch = true; }
+  const iv = mon.stats_meta.ivs;
+  for (const k of K.STAT_KEYS) if (iv[k] != null && iv[k] !== '' && !ivOk(iv[k]) && ivOk(Number(iv[k]))) { iv[k] = Number(iv[k]); ch = true; }
+  if (!K.STAT_KEYS.every(k => ivOk(iv[k]))) {
+    const q = K.IV_BAND[mon.quality] ? mon.quality : null;
+    const fresh = rollIvs(q, rand);
+    for (const k of K.STAT_KEYS) if (!ivOk(iv[k])) iv[k] = fresh[k];
+    if (!q) mon.quality = qualityOf(iv);
+    ch = true;
+  }
+  if (!K.IV_BAND[mon.quality]) { mon.quality = qualityOf(iv); ch = true; }
+  const nz = natureZh(mon.nature);
+  if (nz && nz !== mon.nature) { mon.nature = nz; ch = true; }
+  else if (!nz && (!mon.nature || ZH)) { mon.nature = rollNature(rand); ch = true; }
+  if (!isObj(mon.friendship)) { mon.friendship = { avs: {} }; ch = true; }
+  if (!isObj(mon.friendship.avs)) { mon.friendship.avs = {}; ch = true; }
+  for (const k of AVS_KEYS) {
+    const v = Number(mon.friendship.avs[k]);
+    const c = Number.isFinite(v) ? Math.max(0, Math.min(AVS_MAX, Math.round(v))) : 0;
+    if (mon.friendship.avs[k] !== c) { mon.friendship.avs[k] = c; ch = true; }
+  }
+  if (mon.pp !== undefined && mon.pp !== null && !isObj(mon.pp)) { mon.pp = null; ch = true; }
+  if (mon.hp == null && mon.pp) { mon.pp = null; ch = true; } // hp=null 表示刚治疗过（满体力），招式点数也一起回满
+  return ch;
+}
+function ensureAllIndividuals(pkm) {
+  let ch = false;
+  for (const s of [...(pkm?.party?.slots || []), ...(pkm?.party?.box || [])]) if (ensureIndividual(s)) ch = true;
+  return ch;
+}
+const baseStatsOf = name => STATS?.s?.[speciesId(name)] || null;
+// 与对战网页 calcStats 相同的公式（不含努力值）：同种同级也会因个体值和性格而不同
+function monStats(s) {
+  const b = baseStatsOf(s?.species || s?.name); if (!b) return null;
+  const lv = Math.max(1, Math.min(100, Math.floor(Number(s.lv) || 5)));
+  const iv = s.stats_meta?.ivs || {};
+  const [up, down] = K.NATURE_EFFECT[natureZh(s.nature)] || [];
+  const out = {};
+  K.STAT_KEYS.forEach((k, i) => {
+    const v0 = ivOk(iv[k]) ? iv[k] : 31;
+    if (k === 'hp') { out.hp = Math.floor(((2 * b[i] + v0) * lv) / 100) + lv + 10; return; }
+    let v = Math.floor(((2 * b[i] + v0) * lv) / 100) + 5;
+    if (up === k) v = Math.floor(v * 1.1); if (down === k) v = Math.floor(v * 0.9);
+    out[k] = v;
+  });
+  return out;
+}
+// 当前体力按“剩余比例 × 新的最大体力”换算（升级、补个体值后最大体力会变）
+function curHp(s) {
+  const st = monStats(s); const max = st?.hp || Number(s.maxHp) || null;
+  if (s.hp == null || !s.maxHp) return { hp: max, max, full: true };
+  const hp = Math.max(0, Math.min(max, Math.round((Number(s.hp) / Number(s.maxHp)) * max)));
+  return { hp: Number(s.hp) > 0 && hp === 0 ? 1 : hp, max, full: false };
+}
+const moveIdOf = name => { const n = String(name || '').trim(); if (!n) return ''; if (ZH?.movesRev?.[n]) return ZH.movesRev[n]; const id = n.toLowerCase().replace(/[^a-z0-9]/g, ''); return STATS?.m?.[id] != null ? id : ''; };
+const maxPP = name => STATS?.m?.[moveIdOf(name)] ?? null;
+function ppText(s, name) {
+  const max = maxPP(name); if (!max) return '';
+  const left = s.hp != null && isObj(s.pp) && Number.isFinite(Number(s.pp[name])) ? Math.max(0, Math.min(max, Number(s.pp[name]))) : max;
+  return `${left}/${max}`;
+}
+const natureNote = n => { const e = K.NATURE_EFFECT[natureZh(n)]; return e ? `${K.STAT_ZH[e[0]]}↑ ${K.STAT_ZH[e[1]]}↓` : '无修正'; };
+// 叫声：宝可梦只喊自己的名字或名字的音节（会说话的喵喵除外）
+function cryLines(name) {
+  const n = String(name || '').trim(); if (!n) return [];
+  if (K.CRIES[n]) return K.CRIES[n];
+  if (n.length <= 2) return [`${n}～！`, `${n}${n}！`];
+  if (n.length === 3) return [`${n}～！`, `${n[0]}～${n.slice(1)}！`];
+  if (n.length === 4) return [`${n.slice(0, 2)}～${n.slice(2)}！`, `${n}～！`];
+  return [`${n}！`, `${n}～`];
+}
+const cryText = s => cryLines(s?.species || s?.name).slice(0, 2).map(x => `「${x}」`).join('');
+function cryId(name) { const id = speciesId(name); return id ? id.replace(/-/g, '') : ''; }
+let lastCry = null;
+function playCry(s) {
+  const id = cryId(s?.species || s?.name); if (!id) return;
+  try { if (P.localStorage?.getItem('pkmKantoMute') === '1') return; } catch (_) {}
+  try { lastCry?.pause?.(); const a = new P.Audio(`https://play.pokemonshowdown.com/audio/cries/${id}.mp3`); a.volume = 0.55; lastCry = a; a.play().catch(() => {}); } catch (_) {}
+}
+function cryBubble(s) {
+  const host = PD.getElementById('pkm-kanto-ball'); if (!host) return;
+  host.querySelector('.cry')?.remove();
+  const lines = cryLines(s?.species || s?.name);
+  const b = PD.createElement('div'); b.className = 'cry'; b.textContent = lines[Math.floor(Math.random() * lines.length)] || '……';
+  host.appendChild(b); setTimeout(() => b.remove(), 2600);
 }
 
 /* ---------- 状态栏 <pkm_state> 与时间 ---------- */
@@ -152,7 +271,7 @@ function defaultPkm() {
 function emptySlot(n) {
   return { slot: n, name: null, nickname: null, species: null, gender: null, lv: null, quality: null, nature: null, ability: null, shiny: false, item: null, isAce: false, isLead: false,
     friendship: { avs: { trust: 0, passion: 0, insight: 0, devotion: 0 } }, moves: [null, null, null, null],
-    stats_meta: { ivs: { hp: null, atk: null, def: null, spa: null, spd: null, spe: null }, ev_level: 0 }, hp: null, maxHp: null, status: null, exp: null, ball: null, met: null, notes: null };
+    stats_meta: { ivs: { hp: null, atk: null, def: null, spa: null, spd: null, spe: null }, ev_level: 0 }, hp: null, maxHp: null, status: null, pp: null, exp: null, ball: null, met: null, notes: null };
 }
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 function normalize(pkm) {
@@ -188,7 +307,7 @@ const hasMon = s => !!(s && (s.species || s.name));
 function readPkm() { const f = findStat(); return normalize(f ? clone(f.vars.stat_data.pkm) : defaultPkm()); }
 let writeChain = Promise.resolve();
 function writePkm(mutator) {
-  const run = async () => {
+  const run = async (attempt = 0) => {
     const c = chat(); const id = Math.max(0, c.length - 1);
     const f = findStat();
     const vars = clone(f ? f.vars : (getMsgVars(id) || {})) || {};
@@ -196,11 +315,15 @@ function writePkm(mutator) {
     const pkm = normalize(vars.stat_data.pkm ? vars.stat_data.pkm : defaultPkm());
     for (const s of [...pkm.party.slots, ...pkm.party.box]) if (hasMon(s) && !s.uid) s.uid = uid();
     const result = await mutator(pkm);
+    ensureAllIndividuals(pkm);
+    // v1.3.4：写入前确认 MVU 没有在这期间更新变量（否则会把 AI 刚写的好感等覆盖掉），有变化就基于新变量重算一次
+    const f2 = findStat();
+    if (attempt < 2 && f2 && (f2.id !== f?.id || JSON.stringify(f2.vars?.stat_data?.pkm) !== JSON.stringify(f?.vars?.stat_data?.pkm))) return run(attempt + 1);
     vars.stat_data.pkm = pkm;
     await setMsgVars(id, vars);
     return result;
   };
-  const p = writeChain.then(run, run);
+  const p = writeChain.then(() => run(0), () => run(0));
   writeChain = p.catch(() => {});
   return p.finally(() => { refreshAll(); refreshInjection(); });
 }
@@ -234,6 +357,7 @@ function makeStarter(species, nickname, mode) {
     met: mode === '沙盒模式' ? '第1年 5月22日 · 真新镇·大木研究所后院，大木博士托付' : '第1年 5月22日 · 真新镇·大木研究所，大木博士赠送',
     notes: mode === '小智模式' ? '大木博士给的最后一只宝可梦，不肯进精灵球' : '大木博士给的第一只宝可梦',
   });
+  mon.quality = null; ensureIndividual(mon); // 随机个体值（按总和推算资质）
   return mon;
 }
 
@@ -309,7 +433,14 @@ function summaryText(pkm) {
   const pl = pkm.player, lines = [];
   const title = pl.title || K.TITLES.find(([n]) => (pl.reputation || 0) >= n)[1];
   lines.push(`训练家：${pl.name || userName()}${pl.gender ? '（' + pl.gender + '）' : ''}｜模式：${pkm.world.mode || '—'}｜金钱 ${pl.money} 元｜声望 ${pl.reputation}（${title}）｜徽章 ${pl.badges.length}/8${pl.badges.length ? '：' + pl.badges.join('、') : ''}`);
-  const party = pkm.party.slots.map((s, i) => (hasMon(s) ? `${i + 1}. ${monName(s)}${s.nickname ? '（' + s.species + '）' : ''} Lv${s.lv ?? '?'}${genderMark(s.gender)}${s.hp != null && s.maxHp ? ` HP ${s.hp}/${s.maxHp}` : ' HP 满'}${s.status ? '·' + s.status : ''} 招式：${(s.moves || []).filter(Boolean).join('/') || '—'}${s.isLead ? ' [首发]' : ''}${s.uid && s.uid === pkm.party.follow ? ' [在身边跟随]' : ''}` : null)).filter(Boolean);
+  const party = pkm.party.slots.map((s, i) => {
+    if (!hasMon(s)) return null;
+    const h = curHp(s);
+    const moves = (s.moves || []).filter(Boolean).map(m => { const t = ppText(s, m); return t && t !== `${maxPP(m)}/${maxPP(m)}` ? `${m}(PP ${t})` : m; });
+    const av = s.friendship?.avs || {};
+    return `${i + 1}. ${monName(s)}${s.nickname ? '（' + s.species + '）' : ''} Lv${s.lv ?? '?'}${genderMark(s.gender)}${!h.full && h.max ? ` HP ${h.hp}/${h.max}` : ' HP 满'}${s.status ? '·' + s.status : ''} 招式：${moves.join('/') || '—'}${s.isLead ? ' [首发]' : ''}${s.uid && s.uid === pkm.party.follow ? ' [在身边跟随]' : ''}`
+      + `｜${s.nature ? '性格' + (natureZh(s.nature) || s.nature) : ''}｜羁绊 ${AVS_KEYS.map(k => K.AVS_ZH[k] + (av[k] || 0)).join('/')}｜叫声${cryText(s)}`;
+  }).filter(Boolean);
   lines.push('队伍：' + (party.length ? '\n  ' + party.join('\n  ') : '（还没有宝可梦，不能发起对战）'));
   if (pkm.party.box.length) lines.push(`电脑：${pkm.party.box.length} 只（${pkm.party.box.slice(-12).map(monName).join('、')}）`);
   const bag = Object.entries(pl.bag).filter(([, n]) => Number(n) > 0).map(([k, n]) => `${k}×${n}`);
@@ -317,9 +448,35 @@ function summaryText(pkm) {
   const seen = Object.keys(pkm.dex.seen);
   lines.push(`图鉴：遇见 ${seen.length} 种 / 收服 ${new Set(pkm.dex.caught).size} 种${seen.length ? '；图鉴已遇见：' + seen.join('、') : ''}`);
   const met = Object.values(pkm.npcs.records).filter(r => r && r.met).sort((a, b) => (b.lastInteraction ?? -1) - (a.lastInteraction ?? -1));
-  if (met.length) lines.push('已结识人物（好感）：' + met.map(r => `${r.name}(${r.love ?? 0})`).join('、'));
+  if (met.length) lines.push('已结识人物（好感 -100~100，key 写在方括号里）：' + met.map(r => `${r.name}[${npcKeyOfRecord(pkm, r)}](${r.love ?? 0}${r.last ? '，上次' + (r.last > 0 ? '+' : '') + r.last + (r.why ? ' ' + r.why : '') : ''})`).join('、'));
   if (pkm.battle.lastResult) lines.push('最近一场对战：' + (typeof pkm.battle.lastResult === 'string' ? pkm.battle.lastResult : JSON.stringify(pkm.battle.lastResult)));
   return lines.join('\n');
+}
+const npcKeyOfRecord = (pkm, r) => Object.keys(pkm.npcs.records).find(k => pkm.npcs.records[k] === r) || '?';
+// 人物名 / 别名 → records 的 key（AI 写成中文名或新造 key 时用来对上已有人物）
+function npcKeyFor(records, raw) {
+  const n = String(raw ?? '').trim(); if (!n) return null;
+  if (isObj(records[n])) return n;
+  const low = n.toLowerCase(); if (isObj(records[low])) return low;
+  const plain = n.replace(/[（(].*?[)）]/g, '').trim();
+  for (const [k, r] of Object.entries(records)) {
+    if (!isObj(r)) continue;
+    const names = [r.name, String(r.name || '').replace(/小姐$|博士$|先生$/, ''), ...(K.NPC_ALIASES[k] || [])].filter(Boolean);
+    if (names.includes(n) || names.includes(plain)) return k;
+  }
+  return null;
+}
+function bondRules(pkm, st) {
+  const names = String(st?.在场 || '').split(/[、，,／/；;\s]+/).map(x => x.replace(/[（(].*?[)）]/g, '').trim()).filter(Boolean);
+  const keys = [...new Set(names.map(n => { const k = npcKeyFor(pkm.npcs.records, n); return k ? `${n}=${k}` : null; }).filter(Boolean))];
+  const slots = pkm.party.slots.map((s, i) => (hasMon(s) ? `${monName(s)}=slots/${i}` : null)).filter(Boolean);
+  return ['【好感与羁绊（每轮都要检查）】',
+    `- 本轮 {{user}} 和在场人物有实际互动（交谈、帮忙、请客、并肩作战、吵架又和好……）时，在 <UpdateVariable> 里给他/她好感：{"op":"delta","path":"/pkm/npcs/records/<key>/love","value":2}（日常 +1~3，救命或重大事件 +5~10，冒犯、背叛为负），同时 replace 这个人的 last（本次变化值）和 why（原因，15 字内）。`,
+    `- key 必须用英文 key，不能用中文名${keys.length ? '。上一幕在场人物：' + keys.join('、') : ''}。`,
+    `- {{user}} 照顾、训练、夸奖、喂食、并肩作战的宝可梦要加羁绊：{"op":"delta","path":"/pkm/party/slots/<i>/friendship/avs/<trust|passion|insight|devotion>","value":1~3}（信任/热情/默契/亲密，0~100）${slots.length ? '。槽位：' + slots.join('、') : ''}。`,
+    '- 脚本兜底：在场却没写好感变化的人物自动 +1（上限 30）；对战后出场的宝可梦自动加信任、获胜再加热情。所以你写的变化要体现剧情里真正的影响。',
+    '【宝可梦叫声】宝可梦（会说话的喵喵除外）只会喊自己的名字或名字的音节，队伍里的叫法见上面的“叫声”。不要把名字截成不存在的叫法（例如小火龙不叫“小火小火”，应是“小火龙～！”“小～火龙！”）。',
+    '【能力与 PP】宝可梦的个体值、性格、能力值和招式剩余 PP 由脚本维护；在宝可梦中心治疗后，把队伍每只的 hp、status、pp 都 replace 为 null（全部回满）。'].join('\n');
 }
 function buildInjection() {
   const c = chat(); if (!c.length) return '';
@@ -350,6 +507,7 @@ function buildInjection() {
   const lastUser = [...c].reverse().find(m => m.is_user);
   if (lastUser && /<pkm_result>/i.test(lastUser.mes || '')) parts.push('【对战结果】玩家的上一条消息带有 <pkm_result>：按结果续写战斗经过，不改写胜负。HP/状态、精灵球消耗、收服入队、图鉴登记已由脚本写入变量，不要重复写。');
   parts.push('【变量摘要（脚本生成，以此为准）】\n' + summaryText(pkm));
+  parts.push(bondRules(pkm, st));
   return subUser(parts.join('\n\n'));
 }
 let lastInjection = '';
@@ -366,9 +524,178 @@ function refreshInjection() {
 /* ======================================================================
  * 5. 在场人物 → 已结识 / 最近互动；状态栏 → 世界时间地点
  * ==================================================================== */
-function applySync(pkm, mesid) {
-  const st = parseState(chat()[mesid]?.mes); if (!st) return false;
+/* ---------- v1.3.4：AI 的 <UpdateVariable> 对账 + 好感 / 羁绊兜底 ---------- */
+function pathSegs(path) {
+  let p = String(path ?? '').trim(); if (!p) return [];
+  let segs = p.startsWith('/') ? p.slice(1).split('/').map(x => x.replace(/~1/g, '/').replace(/~0/g, '~'))
+    : p.replace(/\[(\d+)\]/g, '.$1').split('.').map(x => x.replace(/^['"]|['"]$/g, ''));
+  segs = segs.filter(x => x !== '');
+  if (segs[0] === 'stat_data') segs.shift();
+  return segs;
+}
+function parsePatchOps(text) {
+  const ops = [];
+  const t = String(text || '');
+  for (const m of t.matchAll(/<UpdateVariable>([\s\S]*?)(?:<\/UpdateVariable>|$)/gi)) {
+    const b = m[1];
+    const jp = b.match(/<JSONPatch>([\s\S]*?)(?:<\/JSONPatch>|$)/i);
+    const raw = (jp ? jp[1] : (b.match(/\[[\s\S]*\]/) || [''])[0]).replace(/```(?:json)?/gi, '').trim();
+    if (raw) {
+      let arr = null;
+      for (const cand of [raw, raw.replace(/^\s*\/\/[^\n]*$/gm, '').replace(/,\s*([\]}])/g, '$1')]) { try { arr = JSON.parse(cand); break; } catch (_) {} }
+      if (Array.isArray(arr)) ops.push(...arr.filter(isObj));
+      else for (const o of raw.matchAll(/\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}/g)) { try { const x = JSON.parse(o[0]); if (x?.op && x?.path) ops.push(x); } catch (_) {} }
+    }
+    // 旧式写法：_.set('pkm.npcs.records.misty.love', 0, 5); / _.add('路径', 2);
+    for (const c of b.matchAll(/_\.(set|add|delta|remove)\(\s*(['"`])(.+?)\2\s*(?:,([^;]*?))?\)\s*;/g)) {
+      let args = []; try { args = JSON.parse('[' + String(c[4] || '').replace(/'/g, '"') + ']'); } catch (_) { continue; }
+      if (c[1] === 'set') ops.push({ op: 'replace', path: c[3], value: args[args.length - 1] });
+      else if (c[1] === 'remove') ops.push({ op: 'remove', path: c[3] });
+      else if (typeof args[0] === 'number') ops.push({ op: 'delta', path: c[3], value: args[0] });
+    }
+  }
+  return ops.map(o => ({ op: String(o.op || '').toLowerCase(), segs: pathSegs(o.path), value: o.value })).filter(o => o.segs.length && o.op);
+}
+const hasOwnStat = id => !!getMsgVars(id)?.stat_data?.pkm;
+function prevPkm(mesid) {
+  for (let i = mesid - 1; i >= 0; i--) { const v = getMsgVars(i); if (v?.stat_data?.pkm) return normalize(clone(v.stat_data.pkm)); }
+  return null;
+}
+// MVU 完全没有处理这一楼时（没装 / 报错），按 AI 的 JSONPatch 自己写入（与 MVU 的 replace/add/delta/remove/insert 语义一致）
+function applyOpsGeneric(pkm, ops) {
+  const root = { pkm };
+  for (const o of ops) {
+    const segs = o.segs.slice();
+    if (segs[0] !== 'pkm' || ['integration', 'wild'].includes(segs[1])) continue;
+    if (segs[1] === 'npcs' && segs[2] === 'records' && segs[3]) { const k = npcKeyFor(pkm.npcs.records, segs[3]) || (segs.length === 4 && isObj(o.value) ? npcKeyFor(pkm.npcs.records, o.value.name) : null); if (k) segs[3] = k; }
+    let parent = root;
+    for (let i = 0; i < segs.length - 1 && parent; i++) {
+      if (typeof parent !== 'object') { parent = null; break; }
+      if (parent[segs[i]] === undefined && (o.op === 'add' || o.op === 'insert')) parent[segs[i]] = {};
+      parent = parent[segs[i]];
+    }
+    if (!parent || typeof parent !== 'object') continue;
+    const last = segs[segs.length - 1];
+    try {
+      if (o.op === 'replace') { if (Array.isArray(parent) ? Number(last) < parent.length : last in parent) parent[last] = clone(o.value); }
+      else if (o.op === 'add' || o.op === 'insert') { if (Array.isArray(parent)) { if (last === '-') parent.push(clone(o.value)); else parent.splice(Number(last), 0, clone(o.value)); } else parent[last] = clone(o.value); }
+      else if (o.op === 'remove') { if (Array.isArray(parent)) parent.splice(Number(last), 1); else delete parent[last]; }
+      else if (o.op === 'delta') { const n = Number(o.value); if (Number.isFinite(n)) parent[last] = (Number(parent[last]) || 0) + n; }
+    } catch (_) {}
+  }
+}
+const AUTO_LOVE_CAP = 30, AUTO_AVS_CAP = 50;
+const clampLove = v => Math.max(-100, Math.min(100, Math.round(v)));
+const clampAv = v => Math.max(0, Math.min(AVS_MAX, Math.round(v)));
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+// 以“上一楼的变量 + 本楼 AI 写的变化（+ 兜底加成）”为期望值：MVU 已经写对的不动，没写进去的补上。重复执行结果不变。
+function reconcileBonds(pkm, mesid, presentKeys) {
+  const msg = chat()[mesid]; if (!msg || msg.is_user) return false;
+  const base = prevPkm(mesid); if (!base) return false;
+  const ops = parsePatchOps(msg.mes);
+  const recs = pkm.npcs.records, baseRecs = base.npcs.records;
   let changed = false;
+  const exp = {}, touched = new Set(), dup = new Set();
+  for (const o of ops) {
+    const g = o.segs;
+    if (g[0] !== 'pkm' || g[1] !== 'npcs' || g[2] !== 'records' || !g[3]) continue;
+    const raw = g[3];
+    let key = npcKeyFor(baseRecs, raw);
+    if (!key && g.length === 4 && isObj(o.value) && o.value.name) key = npcKeyFor(baseRecs, o.value.name);
+    if (!key) { // 真正的新人物：MVU 没建出来就补建
+      if (g.length === 4 && isObj(o.value) && (o.op === 'add' || o.op === 'replace')) exp[raw] = { __new: clone(o.value) };
+      else if (g.length === 5 && exp[raw]?.__new && ['add', 'replace', 'delta'].includes(o.op)) { const nv = exp[raw].__new; nv[g[4]] = o.op === 'delta' ? (Number(nv[g[4]]) || 0) + (Number(o.value) || 0) : o.value; }
+      continue;
+    }
+    if (key !== raw && !isObj(baseRecs[raw])) dup.add(raw);
+    const e = exp[key] || (exp[key] = {});
+    const b = baseRecs[key];
+    const curLove = () => (e.love ?? (Number(b.love) || 0));
+    if (g.length === 4) {
+      if (!isObj(o.value)) continue;
+      e.met = true;
+      const d = Number(o.value.last);
+      if (Number.isFinite(d) && d) { e.love = curLove() + d; e.last = d; touched.add(key); }
+      if (o.value.why) e.why = String(o.value.why);
+      continue;
+    }
+    const f = g[4];
+    if (f === 'love') {
+      const n = Number(o.value); if (!Number.isFinite(n)) continue;
+      if (o.op === 'delta') { e.love = curLove() + n; e._d = (e._d || 0) + n; } else if (o.op === 'replace' || o.op === 'add') e.love = n; else continue;
+      touched.add(key);
+    } else if (['last', 'why', 'met'].includes(f) && (o.op === 'replace' || o.op === 'add')) e[f] = f === 'last' ? (Number(o.value) || 0) : o.value;
+  }
+  // 兜底：在场、本楼没写好感变化、好感在 0~30 之间的人物 +1
+  for (const key of presentKeys) {
+    const b = baseRecs[key]; if (!isObj(b) || touched.has(key)) continue;
+    const bl = Number(b.love) || 0; if (bl < 0 || bl >= AUTO_LOVE_CAP) continue;
+    const e = exp[key] || (exp[key] = {});
+    e.love = bl + 1; e.last = 1; e.why = e.why || '一起相处';
+  }
+  for (const e of Object.values(exp)) if (e.last === undefined && e._d) e.last = e._d; // AI 只写了 delta 没写 last 时补上
+  for (const [key, e] of Object.entries(exp)) {
+    if (e.__new) {
+      if (!isObj(recs[key])) { recs[key] = { name: key, gender: '无', role: null, love: 0, met: true, last: 0, why: null, ...e.__new, lastInteraction: mesid }; recs[key].love = clampLove(Number(recs[key].love) || 0); changed = true; }
+      continue;
+    }
+    const b = baseRecs[key];
+    let r = recs[key]; if (!isObj(r)) { r = recs[key] = clone(b); changed = true; }
+    if (e.love != null) {
+      const target = clampLove(e.love), cur = Number(r.love), bl = Number(b.love) || 0;
+      if (cur !== target && (!Number.isFinite(cur) || cur === bl)) { r.love = target; changed = true; }
+    }
+    for (const f of ['last', 'why', 'met']) if (e[f] !== undefined && !same(r[f], e[f]) && same(r[f], b[f])) { r[f] = e[f]; changed = true; }
+  }
+  for (const r of Object.values(recs)) if (isObj(r) && r.love != null) { const n = Number(r.love); const c = Number.isFinite(n) ? clampLove(n) : 0; if (r.love !== c) { r.love = c; changed = true; } }
+  for (const k of dup) if (isObj(recs[k]) && !isObj(baseRecs[k])) { delete recs[k]; changed = true; }
+
+  // 宝可梦羁绊
+  const expAv = {}, touchedAv = new Set();
+  const avBase = m => (isObj(m?.friendship?.avs) ? m.friendship.avs : {});
+  for (const o of ops) {
+    const g = o.segs;
+    if (g[0] !== 'pkm' || g[1] !== 'party' || !['slots', 'box'].includes(g[2]) || g[4] !== 'friendship') continue;
+    const i = Number(g[3]); const bm = base.party[g[2]]?.[i]; if (!Number.isInteger(i) || !hasMon(bm)) continue;
+    const id = g[2] + ':' + i, e = expAv[id] || (expAv[id] = {});
+    const cur = k => (e[k] ?? (Number(avBase(bm)[k]) || 0));
+    if (g[5] === 'avs' && AVS_KEYS.includes(g[6])) {
+      const n = Number(o.value); if (!Number.isFinite(n)) continue;
+      if (o.op === 'delta') e[g[6]] = cur(g[6]) + n; else if (o.op === 'replace' || o.op === 'add') e[g[6]] = n; else continue;
+    } else if (g[5] === 'avs' && g.length === 6 && isObj(o.value)) { for (const k of AVS_KEYS) if (Number.isFinite(Number(o.value[k]))) e[k] = Number(o.value[k]); }
+    else continue;
+    touchedAv.add(id);
+  }
+  // 兜底：正文里出现了跟随在身边的宝可梦 → 亲密 +1（上限 50）
+  const content = String(msg.mes || '').replace(/<UpdateVariable>[\s\S]*?(<\/UpdateVariable>|$)/gi, '').replace(/<pkm_state>[\s\S]*?<\/pkm_state>/gi, '');
+  for (const where of ['slots', 'box']) (base.party[where] || []).forEach((bm, i) => {
+    if (!hasMon(bm) || !bm.uid || bm.uid !== base.party.follow || touchedAv.has(where + ':' + i)) return;
+    const names = [bm.nickname, bm.species, bm.name].filter(Boolean);
+    if (!names.some(n => content.includes(n))) return;
+    const bv = Number(avBase(bm).devotion) || 0; if (bv >= AUTO_AVS_CAP) return;
+    (expAv[where + ':' + i] || (expAv[where + ':' + i] = {})).devotion = bv + 1;
+  });
+  for (const [id, e] of Object.entries(expAv)) {
+    const [where, si] = id.split(':'); const i = Number(si);
+    const bm = base.party[where][i], cm = pkm.party[where]?.[i];
+    if (!hasMon(cm)) continue;
+    if (bm.uid && cm.uid ? bm.uid !== cm.uid : (cm.species || cm.name) !== (bm.species || bm.name)) continue;
+    if (!isObj(cm.friendship)) cm.friendship = { avs: {} };
+    if (!isObj(cm.friendship.avs)) cm.friendship.avs = {};
+    for (const [k, v] of Object.entries(e)) {
+      const target = clampAv(v), cur = Number(cm.friendship.avs[k]), bv = Number(avBase(bm)[k]) || 0;
+      if (cur !== target && (!Number.isFinite(cur) || cur === bv)) { cm.friendship.avs[k] = target; changed = true; }
+    }
+  }
+  return changed;
+}
+
+function applySync(pkm, mesid, opts = {}) {
+  if (opts.full) { const ops = parsePatchOps(chat()[mesid]?.mes); if (ops.length) applyOpsGeneric(pkm, ops); }
+  const st = parseState(chat()[mesid]?.mes);
+  let changed = !!opts.full;
+  const present = [];
+  if (!st) return reconcileBonds(pkm, mesid, present) || changed;
   const set = (obj, k, v) => { if (v != null && v !== '' && obj[k] !== v) { obj[k] = v; changed = true; } };
   set(pkm.world, 'location', st.地点); set(pkm.world, 'time', st.时间);
   if (/同行|小智|沙盒/.test(st.模式 || '')) set(pkm.world, 'mode', (st.模式.match(/(同行|小智|沙盒)模式/) || [])[0]);
@@ -378,13 +705,15 @@ function applySync(pkm, mesid) {
     const alias = new Set([r.name, String(r.name || '').replace(/小姐$|博士$/, ''), ...(K.NPC_ALIASES[key] || [])].filter(Boolean));
     if (key === 'meowth' && !names.some(n => /武藏|小次郎|火箭队/.test(n))) alias.delete('喵喵');
     if (names.some(n => alias.has(n))) {
+      present.push(key);
       if (r.met !== true) { r.met = true; changed = true; }
       if (r.lastInteraction !== mesid) { r.lastInteraction = mesid; changed = true; }
     }
   }
+  if (reconcileBonds(pkm, mesid, present)) changed = true;
   return changed;
 }
-function needsSync(mesid) { const pkm = readPkm(); return applySync(pkm, mesid); }
+function needsSync(mesid, opts) { const pkm = readPkm(); const a = applySync(pkm, mesid, opts); return ensureAllIndividuals(pkm) || a; }
 
 /* ======================================================================
  * 6. 样式（ST 主页面 + 图鉴 iframe）
@@ -447,6 +776,20 @@ const HOST_CSS = BASE_CSS + `
 #pkm-kanto-ball .count{position:absolute;right:-4px;top:-4px;background:#2f6fe0;color:#fff;font:700 11px/18px system-ui;min-width:18px;height:18px;border-radius:9px;text-align:center;padding:0 4px}
 #pkm-kanto-ball .follower{pointer-events:auto;max-width:72px;max-height:72px;image-rendering:pixelated;filter:drop-shadow(0 3px 2px rgba(0,0,0,.25));cursor:pointer;animation:pkb-bob 2.4s ease-in-out infinite}
 @keyframes pkb-bob{50%{transform:translateY(-4px)}}
+#pkm-kanto-ball .follower.hop{animation:pkb-hop .5s ease}
+@keyframes pkb-hop{0%,100%{transform:none}30%{transform:translateY(-14px) scale(1.06)}60%{transform:translateY(0) scale(.97,1.03)}}
+#pkm-kanto-ball .cry{position:absolute;right:58px;bottom:70px;pointer-events:none;background:#fff;color:#1d2433;border:2.5px solid #22201c;border-radius:14px;padding:5px 11px;font:700 13px/1.4 system-ui,"PingFang SC","Microsoft YaHei",sans-serif;white-space:nowrap;box-shadow:0 4px 10px rgba(0,0,0,.25);animation:pkb-cry 2.6s ease forwards}
+#pkm-kanto-ball .cry:after{content:"";position:absolute;right:18px;bottom:-9px;border:8px solid transparent;border-top-color:#22201c;border-bottom:0}
+@keyframes pkb-cry{0%{opacity:0;transform:translateY(6px) scale(.9)}10%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}
+#pkm-kanto-panel .mon small.mv{display:flex;flex-wrap:wrap;gap:3px 8px;color:#2a3350}#pkm-kanto-panel .mon small.mv i{font-style:normal;color:#8a93a6;font-size:10.5px}#pkm-kanto-panel .mon small.mv .low i{color:#dc0a2d;font-weight:700}
+#pkm-kanto-panel .stx{margin-top:4px;font-size:11.5px}#pkm-kanto-panel .stx summary{cursor:pointer;color:#2f6fe0;font-weight:650}
+#pkm-kanto-panel .stx .sg{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin:5px 0}
+#pkm-kanto-panel .stx .sg span{background:#f3f5fa;border-radius:8px;padding:3px 6px;font-weight:700;color:#1d2433}#pkm-kanto-panel .stx .sg b{font-weight:600;color:#6b7385;margin-right:4px}
+#pkm-kanto-panel .stx .sg em{display:block;font-style:normal;font-weight:500;font-size:10px;color:#8a93a6}
+#pkm-kanto-panel .stx .sg .up{background:#fff0ee;color:#c62828}#pkm-kanto-panel .stx .sg .down{background:#eef4ff;color:#1e5bc6}
+#pkm-kanto-panel .stx .bd2{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px}#pkm-kanto-panel .stx .bd2 span{display:flex;align-items:center;gap:5px}
+#pkm-kanto-panel .stx .bd2 b{font-weight:600;color:#6b7385;min-width:2em}#pkm-kanto-panel .stx .bd2 i{flex:1;height:6px;border-radius:4px;background:#e6e9f2;overflow:hidden}#pkm-kanto-panel .stx .bd2 u{display:block;height:100%;background:linear-gradient(90deg,#ff8fb1,#ff4d6d)}
+#pkm-kanto-panel .hd button.mute{margin-left:auto;padding:3px 8px}#pkm-kanto-panel .hd button.mute+button{margin-left:4px}
 #pkm-kanto-panel{position:fixed;right:14px;bottom:156px;z-index:3001;width:min(380px,calc(100vw - 28px));max-height:min(70vh,620px);overflow:auto;background:#fff;border-radius:16px;border:3px solid #22201c;box-shadow:0 10px 30px rgba(0,0,0,.35)}
 #pkm-kanto-panel .hd{position:sticky;top:0;background:linear-gradient(135deg,#dc0a2d,#ff5a3c);color:#fff;padding:9px 12px;display:flex;align-items:center;gap:8px;font-weight:800;z-index:1}
 #pkm-kanto-panel .hd button{margin-left:auto;background:rgba(255,255,255,.2);color:#fff;padding:3px 10px}
@@ -478,6 +821,172 @@ const HOST_CSS = BASE_CSS + `
 .pkm-setup .ft{display:flex;gap:8px;justify-content:flex-end;padding:0 18px 16px}
 .pkm-setup .sum{background:#fff;border:1px solid #e1e5ee;border-radius:12px;padding:10px 12px}
 .pkm-setup .err{color:#c0182f;font-size:12.5px;margin-top:6px}
+/* ---------- v1.3.3 开局美化界面 ---------- */
+.pko{all:initial;display:block;box-sizing:border-box;width:100%;max-width:880px;margin:4px 0;border-radius:18px;overflow:hidden;position:relative;isolation:isolate;container-type:inline-size;font-family:"PingFang SC","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;font-size:14px;line-height:1.6;color:#1f2740;text-align:left;box-shadow:0 18px 50px rgba(10,16,40,.28);border:0}
+.pko *,.pko *:before,.pko *:after{box-sizing:border-box}
+.pko img{max-width:none;margin:0;border:0}
+.pko p,.pko h1,.pko h2,.pko h3,.pko ul{margin:0;padding:0}
+.pko button{font-family:inherit;cursor:pointer;border:0;margin:0;line-height:1.35;text-align:left;color:inherit;box-shadow:none;filter:none}
+.pko button:disabled{opacity:.42;cursor:not-allowed}
+.pko .pko-ball-ico{display:inline-block;width:16px;height:16px;border-radius:50%;background:linear-gradient(#e3350d 0 46%,#222 46% 54%,#fff 54%);box-shadow:inset 0 0 0 2px #222;position:relative;flex:none;vertical-align:-3px}
+.pko .pko-ball-ico:after{content:"";position:absolute;inset:5px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px #222}
+.pko .pko-eyebrow{font-size:10.5px;letter-spacing:3px;font-weight:700;color:#d1324a}
+.pko .pko-eyebrow.light{color:#ffd84d}
+/* 标题封面 */
+.pko-title{min-height:560px;background:#1a1426;color:#fff}
+.pko-title .pko-hero-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:28% 50%;z-index:-3;transform:scale(1.04);animation:pkoZoom 18s ease-in-out infinite alternate}
+@keyframes pkoZoom{to{transform:scale(1.1) translateX(-1.5%)}}
+.pko-title .pko-hero-wash{position:absolute;inset:0;z-index:-2;background:linear-gradient(270deg,rgba(18,12,34,.94) 0%,rgba(18,12,34,.82) 34%,rgba(18,12,34,.25) 62%,rgba(18,12,34,0) 80%),linear-gradient(0deg,rgba(14,10,28,.85) 0%,rgba(14,10,28,0) 30%)}
+.pko-title:after{content:"";position:absolute;inset:12px;border:1px solid rgba(255,216,77,.35);border-radius:12px;pointer-events:none;z-index:4}
+.pko .pko-balls{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:-1}
+.pko .pko-balls i{position:absolute;left:var(--x);bottom:-30px;width:var(--s);height:var(--s);border-radius:50%;background:linear-gradient(rgba(255,90,70,.75) 0 45%,rgba(30,30,30,.7) 45% 55%,rgba(255,255,255,.75) 55%);opacity:.55;animation:pkoRise var(--d) linear infinite;animation-delay:var(--dl)}
+@keyframes pkoRise{to{transform:translate(40px,-640px) rotate(540deg);opacity:0}}
+.pko .pko-topline{display:flex;justify-content:space-between;align-items:center;padding:22px 34px;position:relative;z-index:5}
+.pko .pko-brand{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:800;letter-spacing:4px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.pko .pko-quiet{background:rgba(255,255,255,.12);color:#fff;padding:7px 14px;border-radius:999px;font-size:12px;backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.25)}
+.pko .pko-quiet:hover{background:rgba(255,255,255,.22)}
+.pko .pko-vert{position:absolute;left:30px;top:120px;writing-mode:vertical-rl;font-size:15px;letter-spacing:7px;line-height:1.9;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.6);z-index:2;opacity:.92}
+.pko .pko-hero-content{margin-left:auto;width:50%;padding:18px 44px 30px 0;position:relative;z-index:3}
+.pko .pko-ribbon{display:flex;align-items:center;gap:10px;font-size:11px;letter-spacing:3px;color:#ffd84d}
+.pko .pko-ribbon:before{content:"";width:28px;height:1px;background:#ffd84d}
+.pko .pko-logo{display:block;width:min(300px,100%);height:auto;margin:16px 0 0;filter:drop-shadow(0 4px 10px rgba(0,0,0,.45))}
+.pko .pko-cn-title{font-size:40px;font-weight:900;letter-spacing:12px;margin:2px 0 12px;color:#fff;text-shadow:0 3px 0 #2a5bd7,0 6px 18px rgba(0,0,0,.5);line-height:1.2}
+.pko .pko-quote{font-size:15px;line-height:1.9;letter-spacing:1px;color:rgba(255,255,255,.88);margin-bottom:22px}
+.pko .pko-menu{display:grid;gap:10px;max-width:300px}
+.pko .pko-menu button{display:flex;align-items:center;gap:15px;width:100%;padding:14px 18px;border-radius:12px;transition:transform .2s,box-shadow .2s}
+.pko .pko-menu button:hover{transform:translateX(5px)}
+.pko .pko-menu .n{font-size:11px;letter-spacing:2px;opacity:.7}
+.pko .pko-menu b{display:block;font-size:17px;letter-spacing:4px}
+.pko .pko-menu small{display:block;font-size:9.5px;letter-spacing:2.5px;opacity:.75;margin-top:2px}
+.pko .pko-menu i{margin-left:auto;font-style:normal;font-size:18px}
+.pko .pko-primary{background:linear-gradient(135deg,#ff5a4a,#dc0a2d);color:#fff;box-shadow:0 8px 22px rgba(220,10,45,.45)}
+.pko .pko-second{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.3)!important;backdrop-filter:blur(4px)}
+.pko .pko-meta{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:20px;font-size:11px;letter-spacing:1px;color:rgba(255,255,255,.75)}
+.pko .pko-meta span{display:inline-flex;align-items:center;gap:6px}
+.pko .pko-meta span:before{content:"";width:5px;height:5px;border-radius:50%;background:#ffd84d}
+.pko .pko-about{position:relative;z-index:5;margin:0 34px 6px auto;width:min(560px,calc(100% - 68px));background:rgba(14,12,30,.82);border:1px solid rgba(255,216,77,.35);border-radius:14px;padding:14px 18px;backdrop-filter:blur(6px);font-size:13px;color:#f2eefc}
+.pko .pko-about ul{list-style:none;margin-top:6px;display:grid;gap:5px}
+.pko .pko-hero-footer{display:flex;justify-content:space-between;gap:10px;padding:14px 34px 20px;font-size:10.5px;letter-spacing:2px;color:rgba(255,255,255,.7);position:relative;z-index:5}
+.pko .pko-credit{position:absolute;left:34px;bottom:4px;font-size:8.5px;letter-spacing:.5px;color:rgba(255,255,255,.4);z-index:5}
+/* 向导 */
+.pko-wiz{background:#f6f7fb;color:#1f2740}
+.pko .pko-wtop{display:flex;align-items:center;gap:14px;padding:14px 22px;background:linear-gradient(120deg,#1b2a5c,#24398a);color:#fff;flex-wrap:wrap}
+.pko .pko-home{display:flex;align-items:center;gap:8px;background:transparent;color:#fff;font-weight:800;letter-spacing:3px;font-size:13px;padding:4px 2px}
+.pko .pko-steps{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.pko .pko-step{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.7);padding:6px 12px 6px 6px;border-radius:999px;font-size:12px}
+.pko .pko-step span{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.18);font-size:11px;font-weight:800}
+.pko .pko-step.on{background:#ffcb05;color:#1b2a5c;font-weight:800}.pko .pko-step.on span{background:#1b2a5c;color:#ffcb05}
+.pko .pko-step.done{color:#fff}.pko .pko-step.done span{background:#3fbf6b;color:#fff}
+.pko .pko-step:disabled{opacity:.8;cursor:default}
+.pko .pko-main{padding:22px 26px 8px}
+.pko .pko-h2{font-size:23px;font-weight:900;letter-spacing:2px;color:#1b2a5c;margin:6px 0 4px;line-height:1.35}
+.pko .pko-sub{font-size:13px;color:#5d6680;margin-bottom:16px}.pko .pko-sub b{color:#d1324a}
+.pko .pko-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 26px 22px}
+.pko .pko-outline{background:#fff;color:#3a4566;border:1.5px solid #cfd5e4!important;padding:11px 18px;border-radius:10px;font-size:13.5px}
+.pko .pko-go{background:linear-gradient(135deg,#ff5a4a,#dc0a2d);color:#fff;padding:11px 22px;border-radius:10px;font-weight:800;letter-spacing:1px;font-size:13.5px;box-shadow:0 6px 16px rgba(220,10,45,.3)}
+.pko .pko-go.big{padding:13px 34px;font-size:16px;letter-spacing:4px}
+.pko .pko-go:hover,.pko .pko-outline:hover{filter:brightness(1.05)}
+.pko .pko-check{position:absolute;top:10px;right:10px;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:#dc0a2d;color:#fff;font-weight:900;font-size:14px;opacity:0;transform:scale(.6);transition:.2s;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+.pko .on>.pko-check{opacity:1;transform:none}
+/* 模式卡 */
+.pko .pko-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.pko .pko-mode{position:relative;display:flex;flex-direction:column;background:#fff;border-radius:14px;overflow:hidden;border:2px solid #e2e6f0!important;transition:transform .2s,box-shadow .2s,border-color .2s;padding:0}
+.pko .pko-mode:hover{transform:translateY(-3px);box-shadow:0 10px 24px rgba(27,42,92,.14)}
+.pko .pko-mode.on{border-color:#dc0a2d!important;box-shadow:0 0 0 4px rgba(220,10,45,.14),0 12px 26px rgba(27,42,92,.16)}
+.pko .pko-mode-art{position:relative;display:block;aspect-ratio:16/9;background:#c9d3ea;overflow:hidden}
+.pko .pko-mode-art img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .4s}
+.pko .pko-mode:hover .pko-mode-art img{transform:scale(1.06)}
+.pko .pko-mode-art em{position:absolute;left:10px;top:10px;font-style:normal;font-size:11px;font-weight:800;padding:2px 9px;border-radius:999px;background:#ffcb05;color:#1b2a5c}
+.pko .pko-mode-head{display:flex;flex-direction:column;padding:10px 14px 0}
+.pko .pko-mode-head b{font-size:16px;color:#1b2a5c;letter-spacing:1px}
+.pko .pko-mode-head i{font-style:normal;font-size:9.5px;letter-spacing:2.5px;color:#8a93ad;font-weight:700}
+.pko .pko-mode-time{display:block;margin:6px 14px 0;font-size:11px;color:#d1324a;font-weight:700}
+.pko .pko-mode-desc{display:block;padding:4px 14px 8px;font-size:12px;line-height:1.65;color:#4d5672;flex:1}
+.pko .pko-mode-pk{display:flex;align-items:center;gap:2px;padding:6px 12px 10px;border-top:1px dashed #e2e6f0;margin:0 12px;align-self:stretch;padding-left:0;padding-right:0}
+.pko .pko-mode-pk img{width:34px;height:34px;object-fit:contain}
+.pko .pko-mode-pk small{margin-left:auto;font-size:10.5px;color:#8a93ad}
+/* 档案 + 执照 */
+.pko .pko-profile{display:grid;grid-template-columns:1fr 1.1fr;gap:18px;align-items:start}
+.pko .pko-f{display:block;margin:10px 0 4px;font-weight:800;font-size:12.5px;color:#1b2a5c}.pko .pko-f small{font-weight:400;color:#8a93ad}
+.pko .pko-in{display:block;width:100%;padding:9px 12px;border-radius:10px;border:1.5px solid #cfd6e4;font:inherit;font-size:14px;background:#fff!important;color:#1d2433!important;margin:0;outline:none;box-shadow:none;height:auto}
+.pko .pko-in:focus{border-color:#2a5bd7;box-shadow:0 0 0 3px rgba(42,91,215,.15)}
+.pko .pko-in:disabled{background:#eef1f7!important;color:#7a839b!important}
+.pko .pko-seg{display:flex;gap:8px}
+.pko .pko-seg button{flex:1;text-align:center;padding:9px 0;border-radius:10px;background:#fff;border:1.5px solid #cfd6e4!important;font-weight:700;color:#3a4566}
+.pko .pko-seg button.on{background:#1b2a5c;color:#fff;border-color:#1b2a5c!important}
+.pko .pko-note{margin-top:10px;font-size:12px;color:#6b7390;background:#eef2fb;border-radius:10px;padding:8px 12px}
+.pko .pko-license{position:relative;border-radius:16px;overflow:hidden;background-size:cover;background-position:center;border:2px solid #1b2a5c;box-shadow:0 10px 24px rgba(27,42,92,.18)}
+.pko .pko-lic-top{display:flex;align-items:center;gap:8px;padding:9px 14px;background:linear-gradient(90deg,#dc0a2d,#ff5a4a);color:#fff;font-size:11.5px;font-weight:800;letter-spacing:2px}
+.pko .pko-lic-top em{margin-left:auto;font-style:normal;font-family:ui-monospace,monospace;letter-spacing:1px;opacity:.9}
+.pko .pko-lic-body{display:flex;gap:12px;padding:12px 14px}
+.pko .pko-lic-photo{flex:none;width:96px;height:112px;border-radius:12px;background:radial-gradient(circle at 50% 60%,#fff 0,#e6ecf8 70%);border:1.5px solid #c7d0e4;display:grid;place-items:center;overflow:hidden}
+.pko .pko-lic-photo img{width:92px;height:92px;object-fit:contain}
+.pko .pko-lic-f{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;min-width:0}
+.pko .pko-lic-f div{min-width:0}.pko .pko-lic-f .w{grid-column:1/-1}
+.pko .pko-lic-f small{display:block;font-size:10px;color:#7a839b;letter-spacing:1px}
+.pko .pko-lic-f b{display:block;font-size:13.5px;color:#1b2a5c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pko .pko-lic-foot{padding:6px 14px;font-size:10px;letter-spacing:2px;color:#fff;background:#1b2a5c}
+/* 初始伙伴 */
+.pko .pko-starters{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.pko .pko-starters.c1{grid-template-columns:minmax(0,320px);justify-content:center}
+.pko .pko-starters.c4{grid-template-columns:repeat(4,1fr)}
+.pko .pko-starter{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;padding:12px 12px 14px;border-radius:16px;background:linear-gradient(180deg,color-mix(in srgb,var(--c) 22%,#fff) 0%,#fff 62%);border:2px solid #e2e6f0!important;transition:transform .2s,box-shadow .2s}
+.pko .pko-starter:hover{transform:translateY(-4px);box-shadow:0 12px 24px rgba(27,42,92,.15)}
+.pko .pko-starter.on{border-color:var(--c)!important;box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 30%,transparent),0 12px 26px rgba(27,42,92,.16)}
+.pko .pko-st-no{align-self:flex-start;font-size:10.5px;font-weight:800;letter-spacing:1px;color:#8a93ad;font-family:ui-monospace,monospace}
+.pko .pko-st-art{display:grid;place-items:center;width:100%;aspect-ratio:1/1;max-height:150px}
+.pko .pko-st-art img{width:min(140px,100%);height:auto;max-height:140px;object-fit:contain;filter:drop-shadow(0 8px 10px rgba(0,0,0,.18));transition:transform .3s}
+.pko .pko-starter.on .pko-st-art img{animation:pkoHop 1.6s ease-in-out infinite}
+@keyframes pkoHop{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+.pko .pko-starter b{font-size:16px;color:#1b2a5c;margin-top:2px}.pko .pko-starter b small{font-size:11px;color:#8a93ad;font-weight:600}
+.pko .pko-st-types{display:flex;gap:4px;justify-content:center;margin:5px 0}
+.pko .pko-type{display:inline-block;padding:1px 9px;border-radius:999px;color:#fff;font-size:11px;font-weight:800;letter-spacing:1px;text-shadow:0 1px 1px rgba(0,0,0,.2)}
+.pko .pko-st-desc{font-size:11.5px;line-height:1.6;color:#59627d}
+.pko .pko-nick{max-width:340px;margin-top:6px}
+/* 确认 */
+.pko .pko-confirm{display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:center}
+.pko .pko-cf-partner{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:16px;padding:12px;background:radial-gradient(circle at 50% 40%,color-mix(in srgb,var(--c) 35%,#fff) 0%,#fff 72%);border:2px solid color-mix(in srgb,var(--c) 55%,#fff)}
+.pko .pko-cf-partner img{width:150px;height:150px;object-fit:contain;filter:drop-shadow(0 10px 12px rgba(0,0,0,.2));animation:pkoHop 1.8s ease-in-out infinite}
+.pko .pko-cf-partner b{font-size:16px;color:#1b2a5c}.pko .pko-cf-partner span{display:flex;gap:4px;align-items:center;font-size:12px;color:#6b7390}
+.pko .pko-cf-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.pko .pko-cf-list span{background:#fff;border:1px solid #e1e5ee;border-radius:999px;padding:5px 12px;font-size:12px;color:#3a4566}
+.pko .pko-err{margin-top:10px;color:#c0182f;font-size:12.5px;font-weight:700}
+/* 已登记 */
+.pko-done{min-height:150px;background:#1b2a5c;color:#fff}
+.pko .pko-done-art{position:absolute;inset:0;background-size:cover;background-position:30% 50%;z-index:-2}
+.pko .pko-done-wash{position:absolute;inset:0;z-index:-1;background:linear-gradient(270deg,rgba(18,22,52,.95) 0%,rgba(18,22,52,.85) 50%,rgba(18,22,52,.35) 100%)}
+.pko .pko-done-body{display:flex;align-items:center;gap:16px;padding:18px 24px;margin-left:auto;max-width:620px}
+.pko .pko-done-body h3{font-size:22px;font-weight:900;letter-spacing:3px;color:#fff;margin:2px 0}
+.pko .pko-done-body p{font-size:13px;color:rgba(255,255,255,.88)}
+.pko .pko-done-body small{display:block;margin-top:6px;font-size:11.5px;line-height:1.7;color:rgba(255,255,255,.65)}
+.pko .pko-done-mon{width:104px;height:104px;object-fit:contain;flex:none;padding:6px;border-radius:50%;background:radial-gradient(circle,rgba(255,216,77,.28) 0,rgba(255,216,77,.08) 55%,transparent 72%);filter:drop-shadow(0 6px 10px rgba(0,0,0,.45))}
+/* 窄屏（按聊天气泡宽度） */
+@container (max-width:640px){
+  .pko-title{min-height:0}
+  .pko .pko-hero-art{object-position:22% 50%}
+  .pko-title .pko-hero-wash{background:linear-gradient(0deg,rgba(14,10,28,.96) 0%,rgba(14,10,28,.88) 46%,rgba(14,10,28,.2) 72%,rgba(14,10,28,.05) 100%)}
+  .pko .pko-topline{padding:16px 20px}
+  .pko .pko-vert{display:none}
+  .pko .pko-hero-content{width:auto;margin:0;padding:150px 22px 18px}
+  .pko .pko-cn-title{font-size:32px;letter-spacing:8px}
+  .pko .pko-menu{max-width:none}
+  .pko .pko-about{margin:0 16px 8px;width:auto}
+  .pko .pko-hero-footer{padding:12px 20px 20px;font-size:9.5px}.pko .pko-credit{left:20px}
+  .pko .pko-steps{margin-left:0}.pko .pko-step{font-size:0;padding:4px}.pko .pko-step span{font-size:11px}.pko .pko-step.on{font-size:12px;padding-right:10px}
+  .pko .pko-main{padding:18px 16px 6px}.pko .pko-foot{padding:12px 16px 18px}
+  .pko .pko-modes,.pko .pko-profile,.pko .pko-confirm{grid-template-columns:1fr}
+  .pko .pko-mode{flex-direction:column}
+  .pko .pko-starters.c4{grid-template-columns:repeat(2,1fr)}
+  .pko .pko-starters.c3{gap:8px}.pko .pko-starters.c3 .pko-st-desc{display:none}.pko .pko-starters.c3 .pko-starter{padding:8px 6px 10px}.pko .pko-starters.c3 .pko-starter b{font-size:14px}
+  .pko .pko-starters .pko-check{width:22px;height:22px;font-size:12px;top:6px;right:6px}
+  .pko .pko-mode-art{aspect-ratio:21/9}
+  .pko .pko-credit{position:static;display:block;padding:0 20px 14px}.pko .pko-hero-footer{padding-bottom:6px}.pko .pko-hero-footer span+span{display:none}
+  .pko .pko-lic-top{letter-spacing:1px}.pko .pko-lic-cn{display:none}
+  .pko .pko-cf-partner{flex-direction:row;gap:12px;flex-wrap:wrap}.pko .pko-cf-partner img{width:100px;height:100px}
+  .pko .pko-starters.c1{grid-template-columns:minmax(0,260px)}
+  .pko .pko-h2{font-size:19px}
+  .pko .pko-done-body{padding:16px}.pko .pko-done-mon{width:72px;height:72px}
+}
 `;
 function ensureHostStyle() {
   if (PD.getElementById('pkm-kanto-style')) return;
@@ -487,68 +996,148 @@ function ensureHostStyle() {
 /* ======================================================================
  * 7. 开局登记界面（[[PKM_SETUP]] → 挂载到第 0 楼）
  * ==================================================================== */
-const setupState = { step: 0, mode: '同行模式', name: '', gender: '男', hometown: '真新镇', intro: '', starter: '', nickname: '', busy: false, error: '' };
+const setupState = { step: 0, mode: '同行模式', name: '', gender: '男', hometown: '真新镇', intro: '', starter: '', nickname: '', busy: false, error: '', about: false, lic: String(10000 + Math.floor(Math.random() * 89999)) };
 function setupDone(pkm) { return !!pkm.integration.profile || chat().length > 1; }
+/* v1.3.3 · 开局美化界面：标题封面 → 模式 → 档案 → 伙伴 → 确认（图片放在网站 st-bridge/img/） */
+const IMG = n => BASE + 'st-bridge/img/' + n + '?v=' + VERSION;
+const OPEN_MODES = {
+  同行模式: { img: 'mode-companion.webp', en: 'TRAVEL TOGETHER', tag: '推荐', pos: 'center 40%' },
+  小智模式: { img: 'mode-ash.webp', en: 'BE ASH KETCHUM', tag: '原作', pos: 'center 30%' },
+  沙盒模式: { img: 'mode-sandbox.webp', en: 'FREE SANDBOX', tag: '自由', pos: 'center 60%' },
+};
+const OPEN_STARTERS = {
+  妙蛙种子: { img: 'bulbasaur', types: ['草', '毒'], color: '#5fbf7f', no: '001' },
+  小火龙: { img: 'charmander', types: ['火'], color: '#ff8a4c', no: '004' },
+  杰尼龟: { img: 'squirtle', types: ['水'], color: '#4aa8ff', no: '007' },
+  皮卡丘: { img: 'pikachu', types: ['电'], color: '#ffcc33', no: '025' },
+  小拉达: { img: 'rattata', types: ['一般'], color: '#b48ad6', no: '019' },
+  波波: { img: 'pidgey', types: ['一般', '飞行'], color: '#c9a36b', no: '016' },
+  尼多兰: { img: 'nidoranf', types: ['毒'], color: '#8fa7ff', no: '029' },
+  伊布: { img: 'eevee', types: ['一般'], color: '#d29b62', no: '133' },
+};
+const TYPE_COLOR = { 草: '#3fa65a', 毒: '#9b4fc0', 火: '#ef6a2a', 水: '#3a86e8', 电: '#e6b400', 一般: '#9a9a7c', 飞行: '#7f8ff0' };
+const typeChips = n => (OPEN_STARTERS[n]?.types || []).map(t => `<span class="pko-type" style="background:${TYPE_COLOR[t] || '#888'}">${t}</span>`).join('');
+const starterArt = (n, cls = '') => OPEN_STARTERS[n] ? `<img class="${cls}" src="${IMG('starter-' + OPEN_STARTERS[n].img + '.webp')}" alt="${esc(n)}" loading="lazy" onerror="this.style.visibility='hidden'">` : spriteImg(n, { anim: true });
+const OPEN_STEPS = ['旅程模式', '训练家档案', '初始伙伴', '确认出发'];
 function renderSetup(el) {
   const pkm = readPkm();
   if (setupDone(pkm)) {
     const pr = pkm.integration.profile || {};
     const lead = pkm.party.slots.find(hasMon);
-    el.innerHTML = `<div class="pkb pkm-setup"><div class="hd"><h3>📇 训练家档案已登记</h3><p>${esc(pr.name || pkm.player.name || userName())} · ${esc(pr.mode || pkm.world.mode || '')}${lead ? ' · 初始伙伴：' + esc(monName(lead)) : ''}</p></div><div class="bd muted" style="font-size:12.5px">旅程已经开始。队伍与仓库在右下角的精灵球里，图鉴状态栏显示在最新一条回复的末尾。<br>外置桥接 v${VERSION} · 对战网页：${esc(BASE)}</div></div>`;
+    const leadName = lead ? (lead.species || '') : (pr.starter || '');
+    el.innerHTML = `<div class="pkb pkm-setup pko pko-done"><div class="pko-done-art" style="background-image:url('${IMG('hero.webp')}')"></div><div class="pko-done-wash"></div>
+      <div class="pko-done-body">${leadName && OPEN_STARTERS[leadName] ? starterArt(leadName, 'pko-done-mon') : ''}<div><div class="pko-eyebrow light">TRAINER REGISTERED · 训练家档案已登记</div>
+      <h3>${esc(pr.name || pkm.player.name || userName())}</h3><p>${esc(pr.mode || pkm.world.mode || '')}${lead ? ' · 初始伙伴：' + esc(monName(lead)) : ''}${pr.hometown ? ' · 来自' + esc(pr.hometown) : ''}</p>
+      <small>旅程已经开始。队伍与仓库在右下角的精灵球里，图鉴状态栏显示在最新一条回复的末尾。<br>外置桥接 v${VERSION} · 对战网页：${esc(BASE)}</small></div></div></div>`;
     return;
   }
   const S = setupState;
   if (!S.name) S.name = userName();
-  const steps = `<div class="steps">${[0, 1, 2, 3, 4].map(i => `<i class="${i <= S.step ? 'on' : ''}"></i>`).join('')}</div>`;
-  const head = (t, p) => `<div class="hd"><h3>${t}</h3><p>${p}</p>${steps}</div>`;
-  let body = '', foot = '';
+  const ash = S.mode === '小智模式';
+  const list = K.MODE_STARTERS[S.mode];
+  if (!list.includes(S.starter)) S.starter = list[0];
+  const info = K.MODE_INFO[S.mode];
+  const name = ash ? '小智' : (String(S.name).trim() || userName());
+  const gender = ash ? '男' : S.gender;
+  const home = S.mode === '沙盒模式' ? S.hometown : '真新镇';
   if (S.step === 0) {
-    body = head('🔴 宝可梦·关都之旅', `欢迎来到大木研究所！登记训练家档案、选择旅程模式、领取初始伙伴，然后出发。<br>外置桥接 v${VERSION} · 对战系统来自你自己的网页`) +
-      `<div class="bd"><div class="sum" style="font-size:12.5px;line-height:1.8">🗓️ 第1年 5月22日，真新镇。今天是新人训练家领取宝可梦的日子。<br>⚔️ 你亲自参与的对战在网页对战系统里实际演算，结果会自动写回队伍。<br>📕 回复末尾是图鉴状态栏；右下角精灵球是队伍与仓库，可以让宝可梦出球跟着你。</div></div>`;
-    foot = `<button class="red" data-act="next">开始登记 ›</button>`;
-  } else if (S.step === 1) {
-    body = head('选择旅程模式', '模式决定你在动画关都篇里的位置，之后不能更改。') + `<div class="bd"><div class="cards">${Object.entries(K.MODE_INFO).map(([m, info]) => `<button class="card ${S.mode === m ? 'on' : ''}" data-act="mode" data-v="${m}"><span style="font-size:22px">${info.icon}</span><b>${m}</b><small>${esc(info.desc)}</small></button>`).join('')}</div></div>`;
-    foot = `<button class="ghost" data-act="back">‹ 上一步</button><button class="red" data-act="next">下一步 ›</button>`;
-  } else if (S.step === 2) {
-    const ash = S.mode === '小智模式';
-    body = head('训练家档案', ash ? '小智模式：你就是真新镇的小智。' : '大木博士会用这些信息给你办理训练家执照。') + `<div class="bd">
-      <label class="f">名字</label><input type="text" data-f="name" maxlength="16" value="${esc(ash ? '小智' : S.name)}" ${ash ? 'disabled' : ''}>
-      <label class="f">性别</label><div class="seg">${['男', '女'].map(g => `<button class="${(ash ? '男' : S.gender) === g ? 'on' : ''}" data-act="gender" data-v="${g}" ${ash ? 'disabled' : ''}>${g}</button>`).join('')}</div>
-      <label class="f">家乡</label><select data-f="hometown" ${S.mode !== '沙盒模式' ? 'disabled' : ''}>${['真新镇', '常青市', '深灰市', '华蓝市', '枯叶市', '玉虹市', '金黄市', '紫苑镇', '浅红市', '红莲镇'].map(t => `<option ${S.hometown === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
-      <label class="f">一句话介绍（可选）</label><input type="text" data-f="intro" maxlength="60" placeholder="例如：想成为宝可梦饲育家" value="${esc(S.intro)}">
-      <div class="pk-note">年龄：10 岁（刚好可以领取训练家执照）。${S.mode !== '沙盒模式' ? '同行 / 小智模式的家乡固定为真新镇。' : ''}</div></div>`;
-    foot = `<button class="ghost" data-act="back">‹ 上一步</button><button class="red" data-act="next">下一步 ›</button>`;
-  } else if (S.step === 3) {
-    const list = K.MODE_STARTERS[S.mode];
-    if (!list.includes(S.starter)) S.starter = list[0];
-    const note = { 同行模式: '小茂一大早就来了——他会领走哪一只？你先选的那只就是你的。', 小智模式: '三只初始宝可梦都被领走了，只剩下这只脾气很倔的皮卡丘。', 沙盒模式: '初始宝可梦今年已经送完，后院里还有几只在等训练家。' }[S.mode];
-    body = head('领取初始伙伴', note) + `<div class="bd"><div class="cards">${list.map(n => `<button class="card ${S.starter === n ? 'on' : ''}" data-act="starter" data-v="${n}">${spriteImg(n, { anim: true })}<b>${n}<span class="muted" style="font-weight:400"> Lv5</span></b><small>${esc(K.STARTERS[n].desc)}</small></button>`).join('')}</div>
-      <label class="f">昵称（可选）</label><input type="text" data-f="nickname" maxlength="12" placeholder="不填就叫${esc(S.starter)}" value="${esc(S.nickname)}"></div>`;
-    foot = `<button class="ghost" data-act="back">‹ 上一步</button><button class="red" data-act="next">下一步 ›</button>`;
-  } else {
-    const info = K.MODE_INFO[S.mode], ash = S.mode === '小智模式';
-    body = head('确认出发', '确认后：档案写入变量、初始伙伴入队，并自动发送第一条消息开始旅程。') + `<div class="bd"><div class="sum" style="display:flex;gap:12px;align-items:center">${spriteImg(S.starter, { anim: true })}<div style="font-size:13px;line-height:1.8">
-      <b>${esc(ash ? '小智' : S.name)}</b>（${ash ? '男' : S.gender}，10 岁，${esc(S.mode === '沙盒模式' ? S.hometown : '真新镇')}）· ${S.mode}<br>
-      初始伙伴：${esc(S.nickname ? S.nickname + '（' + S.starter + '）' : S.starter)} Lv5 · 背包：精灵球×5、伤药×2 · 3000 元<br>
-      <span class="muted">出发时间：${info.start.time} · ${info.start.location}</span></div></div>${S.error ? `<div class="err">${esc(S.error)}</div>` : ''}</div>`;
-    foot = `<button class="ghost" data-act="back" ${S.busy ? 'disabled' : ''}>‹ 上一步</button><button class="red" data-act="submit" ${S.busy ? 'disabled' : ''}>${S.busy ? '正在登记……' : '确认出发！'}</button>`;
+    const balls = Array.from({ length: 10 }, (_, i) => `<i style="--x:${(i * 37 + 9) % 100}%;--d:${7 + (i % 5) * 1.6}s;--dl:-${(i * 1.3).toFixed(1)}s;--s:${10 + (i % 4) * 4}px"></i>`).join('');
+    el.innerHTML = `<div class="pkb pkm-setup pko pko-title">
+      <img class="pko-hero-art" src="${IMG('hero.webp')}" alt="" onerror="this.remove()"><div class="pko-hero-wash"></div><div class="pko-balls" aria-hidden="true">${balls}</div>
+      <div class="pko-topline"><div class="pko-brand"><span class="pko-ball-ico"></span>KANTO · JOURNEY</div><div><button class="pko-quiet" data-act="about">${S.about ? '收起说明' : '旅程说明'}</button></div></div>
+      <div class="pko-vert">去吧，<br>向着还没见过的草丛。</div>
+      <div class="pko-hero-content">
+        <div class="pko-ribbon">动画关都篇 · 你的旅程由此开始</div>
+        <img class="pko-logo" src="${IMG('logo-pokemon.webp')}" alt="Pokémon" onerror="this.remove()">
+        <h1 class="pko-cn-title">关都之旅</h1>
+        <p class="pko-quote">第1年 5月22日，真新镇。<br>今天，是新人训练家出发的日子。</p>
+        <div class="pko-menu">
+          <button class="pko-primary" data-act="next"><span class="n">01</span><span><b>开始旅程</b><small>NEW JOURNEY</small></span><i>→</i></button>
+          <button class="pko-second" data-act="about"><span class="n">02</span><span><b>旅程说明</b><small>HOW TO PLAY</small></span><i>${S.about ? '↑' : '↗'}</i></button>
+        </div>
+        <div class="pko-meta"><span>三种旅程模式</span><span>网页实战对战</span><span>图鉴 · 队伍 · 仓库</span></div>
+      </div>
+      ${S.about ? `<div class="pko-about"><b>📖 旅程说明</b><ul>
+        <li>🗓️ 故事从第1年 5月22日的真新镇开始，沿着动画关都篇的时间线推进；你可以同行、扮演小智，或者自由旅行。</li>
+        <li>⚔️ 你亲自参与的对战会打开全屏战斗界面，在你自己的对战网页里实际演算，胜负和体力会自动写回队伍。</li>
+        <li>📕 每条回复末尾是图鉴状态栏（训练家 / 图鉴 / 背包 / 好感 / 地图 / 附近）。</li>
+        <li>🔴 右下角的精灵球是队伍与电脑，可以换首发，也可以让宝可梦出球跟着你。</li></ul></div>` : ''}
+      <div class="pko-hero-footer"><span>真新镇 · 大木研究所</span><span>POKÉMON · INDIGO LEAGUE</span></div>
+      <span class="pko-credit">画面 © Nintendo · Creatures · GAME FREAK · TV Tokyo · ShoPro · JR Kikaku · Pokémon（同人非商用）</span>
+    </div>`;
+    return;
   }
-  el.innerHTML = `<div class="pkb pkm-setup">${body}<div class="ft">${foot}</div></div>`;
+  const stepsBar = `<div class="pko-steps">${OPEN_STEPS.map((t, i) => `<button class="pko-step ${i + 1 === S.step ? 'on' : ''} ${i + 1 < S.step ? 'done' : ''}" data-act="goto" data-v="${i + 1}" ${i + 1 > S.step || S.busy ? 'disabled' : ''}><span>${i + 1 < S.step ? '✓' : i + 1}</span>${t}</button>`).join('')}</div>`;
+  const top = `<div class="pko-wtop"><button class="pko-home" data-act="home" ${S.busy ? 'disabled' : ''}><span class="pko-ball-ico"></span>关都之旅</button>${stepsBar}</div>`;
+  const head = (no, en, title, sub) => `<div class="pko-eyebrow">${no} / ${en}</div><h2 class="pko-h2">${title}</h2><p class="pko-sub">${sub}</p>`;
+  const license = `<div class="pko-license" style="background-image:linear-gradient(100deg,rgba(255,255,255,.96) 0%,rgba(255,255,255,.9) 52%,rgba(255,255,255,.35) 100%),url('${IMG('oak-lab.webp')}')">
+      <div class="pko-lic-top"><span class="pko-ball-ico"></span>TRAINER CARD<span class="pko-lic-cn"> · 训练家执照</span><em>ID No.${esc(S.lic)}</em></div>
+      <div class="pko-lic-body"><div class="pko-lic-photo">${starterArt(S.starter)}</div><div class="pko-lic-f">
+        <div><small>名字</small><b data-live="name">${esc(name)}</b></div>
+        <div><small>性别 / 年龄</small><b>${gender} · 10 岁</b></div>
+        <div><small>家乡</small><b>${esc(home)}</b></div>
+        <div><small>旅程模式</small><b>${esc(S.mode)}</b></div>
+        <div class="w"><small>一句话介绍</small><b data-live="intro">${esc(S.intro || '—')}</b></div>
+      </div></div><div class="pko-lic-foot">关都地区 · 宝可梦联盟认证 · 大木研究所 发行</div></div>`;
+  let body = '', foot = '';
+  if (S.step === 1) {
+    body = head('01', 'CHOOSE YOUR JOURNEY', '你想以什么身份走进关都？', '模式决定你在动画关都篇里的位置。<b>选定后不能更改。</b>') +
+      `<div class="pko-modes">${Object.entries(K.MODE_INFO).map(([m, mi]) => { const o = OPEN_MODES[m] || {}; return `<button class="pko-mode ${S.mode === m ? 'on' : ''}" data-act="mode" data-v="${m}">
+        <span class="pko-mode-art"><img src="${IMG(o.img)}" alt="" loading="lazy" style="object-position:${o.pos || 'center'}" onerror="this.remove()"><em>${o.tag || ''}</em></span>
+        <span class="pko-mode-head"><b>${mi.icon} ${m}</b><i>${o.en || ''}</i></span>
+        <span class="pko-mode-time">${esc(mi.start.time)} · ${esc(mi.start.location)}</span>
+        <span class="pko-mode-desc">${esc(mi.desc)}</span>
+        <span class="pko-mode-pk">${K.MODE_STARTERS[m].map(n => OPEN_STARTERS[n] ? `<img src="${IMG('starter-' + OPEN_STARTERS[n].img + '.webp')}" alt="${esc(n)}" title="${esc(n)}" loading="lazy">` : '').join('')}<small>可选伙伴</small></span>
+        <span class="pko-check">✓</span></button>`; }).join('')}</div>`;
+    foot = `<button class="pko-outline" data-act="home">返回标题</button><button class="pko-go" data-act="next">下一步 · 训练家档案 →</button>`;
+  } else if (S.step === 2) {
+    body = head('02', 'TRAINER PROFILE', ash ? '你就是真新镇的小智。' : '大木博士要给你办理训练家执照。', ash ? '小智模式下名字、性别、家乡固定。' : '填好下面几项，右边的执照会同步更新。') +
+      `<div class="pko-profile"><div class="pko-form">
+        <label class="pko-f">名字</label><input class="pko-in" type="text" data-f="name" maxlength="16" value="${esc(ash ? '小智' : S.name)}" ${ash ? 'disabled' : ''}>
+        <label class="pko-f">性别</label><div class="pko-seg">${['男', '女'].map(g => `<button class="${gender === g ? 'on' : ''}" data-act="gender" data-v="${g}" ${ash ? 'disabled' : ''}>${g === '男' ? '♂ 男孩' : '♀ 女孩'}</button>`).join('')}</div>
+        <label class="pko-f">家乡</label><select class="pko-in" data-f="hometown" ${S.mode !== '沙盒模式' ? 'disabled' : ''}>${['真新镇', '常青市', '深灰市', '华蓝市', '枯叶市', '玉虹市', '金黄市', '紫苑镇', '浅红市', '红莲镇'].map(t => `<option ${home === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <label class="pko-f">一句话介绍 <small>可选</small></label><input class="pko-in" type="text" data-f="intro" maxlength="60" placeholder="例如：想成为宝可梦饲育家" value="${esc(S.intro)}">
+        <div class="pko-note">年龄 10 岁，刚好可以领取训练家执照。${S.mode !== '沙盒模式' ? '同行 / 小智模式的家乡固定为真新镇。' : ''}</div>
+      </div>${license}</div>`;
+    foot = `<button class="pko-outline" data-act="back">← 上一步</button><button class="pko-go" data-act="next">下一步 · 初始伙伴 →</button>`;
+  } else if (S.step === 3) {
+    const note = { 同行模式: '小茂一大早就来了——他会领走哪一只？你先选的那只就是你的。', 小智模式: '三只初始宝可梦都被领走了，只剩下这只脾气很倔的皮卡丘。', 沙盒模式: '初始宝可梦今年已经送完，后院里还有几只在等训练家。' }[S.mode];
+    body = head('03', 'CHOOSE YOUR PARTNER', '选择你的第一位伙伴', esc(note)) +
+      `<div class="pko-starters c${list.length}">${list.map(n => { const o = OPEN_STARTERS[n] || {}; return `<button class="pko-starter ${S.starter === n ? 'on' : ''}" data-act="starter" data-v="${n}" style="--c:${o.color || '#dc0a2d'}">
+        <span class="pko-st-no">No.${o.no || '???'}</span><span class="pko-st-art">${starterArt(n)}</span>
+        <b>${n} <small>Lv5</small></b><span class="pko-st-types">${typeChips(n)}</span><span class="pko-st-desc">${esc(K.STARTERS[n].desc)}</span><span class="pko-check">✓</span></button>`; }).join('')}</div>
+      <div class="pko-nick"><label class="pko-f">昵称 <small>可选</small></label><input class="pko-in" type="text" data-f="nickname" maxlength="12" placeholder="不填就叫${esc(S.starter)}" value="${esc(S.nickname)}"></div>`;
+    foot = `<button class="pko-outline" data-act="back">← 上一步</button><button class="pko-go" data-act="next">下一步 · 确认出发 →</button>`;
+  } else {
+    const o = OPEN_STARTERS[S.starter] || {};
+    body = head('04', 'READY TO GO', '一切就绪，出发吧！', '确认后：档案写入变量、初始伙伴放进队伍，并自动发送第一条消息开始旅程。') +
+      `<div class="pko-confirm"><div class="pko-cf-partner" style="--c:${o.color || '#dc0a2d'}">${starterArt(S.starter)}<b>${esc(S.nickname ? S.nickname + '（' + S.starter + '）' : S.starter)}</b><span>${typeChips(S.starter)} Lv5</span></div>${license}</div>
+      <div class="pko-cf-list"><span>🎒 精灵球 ×5 · 伤药 ×2</span><span>💴 3000 元</span><span>🕖 ${esc(info.start.time)}</span><span>📍 ${esc(info.start.location)}</span></div>
+      ${S.error ? `<div class="pko-err">${esc(S.error)}</div>` : ''}`;
+    foot = `<button class="pko-outline" data-act="back" ${S.busy ? 'disabled' : ''}>← 上一步</button><button class="pko-go big" data-act="submit" ${S.busy ? 'disabled' : ''}>${S.busy ? '正在登记……' : '确认出发！'}</button>`;
+  }
+  el.innerHTML = `<div class="pkb pkm-setup pko pko-wiz">${top}<div class="pko-main">${body}</div><div class="pko-foot">${foot}</div></div>`;
 }
 function bindSetup(el) {
-  el.addEventListener('input', e => { const f = e.target?.dataset?.f; if (f) setupState[f] = e.target.value; });
-  el.addEventListener('change', e => { const f = e.target?.dataset?.f; if (f) setupState[f] = e.target.value; });
+  const live = (f, v) => el.querySelectorAll(`[data-live="${f}"]`).forEach(n => { n.textContent = String(v || '').trim() || (f === 'name' ? userName() : '—'); });
+  el.addEventListener('input', e => { const f = e.target?.dataset?.f; if (f) { setupState[f] = e.target.value; live(f, e.target.value); } });
+  el.addEventListener('change', e => { const f = e.target?.dataset?.f; if (f) { setupState[f] = e.target.value; if (f === 'hometown') rerenderSetups(); } });
+  el.addEventListener('keydown', e => { if (e.target?.dataset?.f) e.stopPropagation(); });
   el.addEventListener('click', e => {
     const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
     e.preventDefault(); e.stopPropagation();
     const S = setupState, act = b.dataset.act;
-    if (act === 'next') { if (S.step === 2 && S.mode !== '小智模式' && !String(S.name).trim()) { toast('请填写名字'); return; } S.step = Math.min(4, S.step + 1); }
+    if (act === 'next') { if (S.step === 2 && S.mode !== '小智模式' && !String(S.name).trim()) { toast('请填写名字'); return; } S.step = Math.min(4, S.step + 1); S.about = false; }
     else if (act === 'back') S.step = Math.max(0, S.step - 1);
+    else if (act === 'home') S.step = 0;
+    else if (act === 'goto') S.step = Math.max(1, Math.min(S.step, +b.dataset.v || 1));
+    else if (act === 'about') S.about = !S.about;
     else if (act === 'mode') { S.mode = b.dataset.v; S.starter = ''; }
     else if (act === 'gender') S.gender = b.dataset.v;
     else if (act === 'starter') S.starter = b.dataset.v;
     else if (act === 'submit') { submitSetup().catch(err => { S.busy = false; S.error = '登记失败：' + (err?.message || err); rerenderSetups(); }); }
     rerenderSetups();
+    if (['next', 'back', 'home', 'goto'].includes(act)) { const box = PD.querySelector('[data-pkm-setup-mounted] .pko'); try { box?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) {} }
   });
 }
 function rerenderSetups() { PD.querySelectorAll('[data-pkm-setup-mounted]').forEach(el => renderSetup(el)); }
@@ -563,7 +1152,7 @@ async function submitSetup() {
   const starter = makeStarter(S.starter, String(S.nickname || '').trim().slice(0, 12), S.mode);
   const profile = { v: VERSION, mode: S.mode, name, gender, age: 10, hometown, starter: S.starter, nickname: starter.nickname, intro: String(S.intro || '').trim().slice(0, 60) };
   await writePkm(pkm => {
-    Object.assign(pkm.player, { name, gender, hometown, id: String(10000 + Math.floor(Math.random() * 89999)) });
+    Object.assign(pkm.player, { name, gender, hometown, id: S.lic });
     pkm.world.mode = S.mode; pkm.world.time = info.start.time; pkm.world.location = info.start.location;
     pkm.party.slots[0] = starter;
     pkm.party.follow = ash ? starter.uid : null;
@@ -742,14 +1331,28 @@ function renderBall() {
   let el = PD.getElementById('pkm-kanto-ball');
   if (!el) {
     el = PD.createElement('div'); el.id = 'pkm-kanto-ball'; el.className = 'pkb'; PD.body.appendChild(el);
-    el.addEventListener('click', e => { if (e.target.closest('.orb,.follower')) togglePanel(); });
+    el.addEventListener('click', e => {
+      if (e.target.closest('.orb')) { togglePanel(); return; }
+      if (e.target.closest('.follower')) { // v1.3.4：点跟随的宝可梦 → 叫一声（真实叫声 + 气泡）
+        const p = readPkm(); const f = [...p.party.slots, ...p.party.box].find(s => hasMon(s) && s.uid && s.uid === p.party.follow);
+        if (f) { playCry(f); cryBubble(f); const img = e.target.closest('.follower'); img.classList.remove('hop'); void img.offsetWidth; img.classList.add('hop'); }
+      }
+    });
   }
   const pkm = readPkm();
   const n = pkm.party.slots.filter(hasMon).length;
   const f = [...pkm.party.slots, ...pkm.party.box].find(s => hasMon(s) && s.uid && s.uid === pkm.party.follow);
   const fUrl = f ? spriteUrl(f.species || f.name, { anim: true, shiny: f.shiny }) : '';
-  el.innerHTML = `${fUrl ? `<img class="follower" src="${esc(fUrl)}" title="${esc(monName(f))}正跟在你身边" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<button class="orb" title="队伍与仓库（关都之旅）"><span class="count">${n}</span></button>`;
+  el.innerHTML = `${fUrl ? `<img class="follower" src="${esc(fUrl)}" title="${esc(monName(f))}正跟在你身边（点一下听它叫）" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<button class="orb" title="队伍与仓库（关都之旅）"><span class="count">${n}</span></button>`;
   if (PD.getElementById('pkm-kanto-panel')) renderPanel();
+}
+// v1.3.4：能力值（含性格修正）、个体值、羁绊
+function statBlock(s) {
+  const st = monStats(s), iv = s.stats_meta?.ivs || {}, av = s.friendship?.avs || {};
+  const [up, down] = K.NATURE_EFFECT[natureZh(s.nature)] || [];
+  const cells = K.STAT_KEYS.map(k => `<span class="${k === up ? 'up' : k === down ? 'down' : ''}"><b>${K.STAT_ZH[k]}</b>${st ? st[k] : '—'}${k === up ? '↑' : k === down ? '↓' : ''}<em>个体 ${ivOk(iv[k]) ? iv[k] : '?'}</em></span>`).join('');
+  const bars = AVS_KEYS.map(k => `<span><b>${K.AVS_ZH[k]}</b><i><u style="width:${Math.max(0, Math.min(100, Number(av[k]) || 0))}%"></u></i>${Number(av[k]) || 0}</span>`).join('');
+  return `<details class="stx"><summary>能力 · 个体 · 羁绊 <span class="muted">${esc(K.QUALITY_ZH[s.quality] || '')}${cryLines(s.species || s.name)[0] ? ' · 叫声「' + esc(cryLines(s.species || s.name)[0]) + '」' : ''}</span></summary><div class="sg">${cells}</div><div class="bd2">${bars}</div></details>`;
 }
 function togglePanel() { const p = PD.getElementById('pkm-kanto-panel'); if (p) p.remove(); else renderPanel(); }
 function renderPanel() {
@@ -761,10 +1364,11 @@ function renderPanel() {
   const pkm = readPkm();
   const party = pkm.party.slots.map((s, i) => ({ s, i })).filter(x => hasMon(x.s));
   const count = party.length;
-  const row = (s, where, i) => `<div class="mon">${spriteImg(s.species || s.name, { shiny: s.shiny })}<div class="grow">${monLine(s, pkm)}<small>${esc((s.moves || []).filter(Boolean).join(' / ') || '—')}</small><small>${s.hp != null && s.maxHp ? `HP ${s.hp}/${s.maxHp}` : 'HP 满'} · ${esc(s.ability || '')}${s.nature ? ' · ' + esc(s.nature) : ''}${s.ball ? ' · ' + esc(s.ball) : ''}</small>${hpBar(s)}${s.met ? `<small>${esc(s.met)}</small>` : ''}</div><div class="acts">
+  const row = (s, where, i) => { const h = curHp(s); return `<div class="mon">${spriteImg(s.species || s.name, { shiny: s.shiny })}<div class="grow">${monLine(s, pkm)}<small class="mv">${(s.moves || []).filter(Boolean).map(m => { const t = ppText(s, m); const low = t && Number(t.split('/')[0]) <= Math.max(1, Math.floor(Number(t.split('/')[1]) / 4)); return `<span class="${low ? 'low' : ''}">${esc(m)}${t ? ` <i>${t}</i>` : ''}</span>`; }).join('') || '—'}</small><small>${h.max ? `HP ${h.hp}/${h.max}` : 'HP 满'} · ${esc(s.ability || '')}${s.nature ? ` · ${esc(natureZh(s.nature) || s.nature)}<span class="muted">（${natureNote(s.nature)}）</span>` : ''}${s.ball ? ' · ' + esc(s.ball) : ''}</small>${hpBar(s)}${statBlock(s)}${s.met ? `<small>${esc(s.met)}</small>` : ''}</div><div class="acts">
     ${where === 'party' ? `${s.isLead ? '' : `<button data-op="lead" data-i="${i}">设为首发</button>`}<button data-op="follow" data-i="${i}" data-w="party">${s.uid && s.uid === pkm.party.follow ? '收回球里' : '出球跟随'}</button>${count > 1 ? `<button data-op="tobox" data-i="${i}">存进电脑</button>` : ''}`
-    : `<button data-op="toparty" data-i="${i}" ${count >= 6 ? 'disabled title="队伍已满 6 只"' : ''}>加入队伍</button><button data-op="follow" data-i="${i}" data-w="box">${s.uid && s.uid === pkm.party.follow ? '收回' : '跟随'}</button>`}</div></div>`;
-  el.innerHTML = `<div class="hd">🔴 我的宝可梦<button data-op="close">✕</button></div>
+    : `<button data-op="toparty" data-i="${i}" ${count >= 6 ? 'disabled title="队伍已满 6 只"' : ''}>加入队伍</button><button data-op="follow" data-i="${i}" data-w="box">${s.uid && s.uid === pkm.party.follow ? '收回' : '跟随'}</button>`}</div></div>`; };
+  let muted = false; try { muted = P.localStorage?.getItem('pkmKantoMute') === '1'; } catch (_) {}
+  el.innerHTML = `<div class="hd">🔴 我的宝可梦<button data-op="mute" class="mute" title="跟随宝可梦的叫声">${muted ? '🔇' : '🔊'}</button><button data-op="close">✕</button></div>
     <div class="tabs"><button class="${panelTab === 'party' ? 'on' : ''}" data-tab="party">队伍 ${count}/6</button><button class="${panelTab === 'box' ? 'on' : ''}" data-tab="box">电脑 ${pkm.party.box.length}</button></div>
     <div class="bd">${panelTab === 'party' ? (party.length ? party.map(x => row(x.s, 'party', x.i)).join('') : '<div class="empty">还没有宝可梦。先在开局界面领取初始伙伴。</div>')
       : (pkm.party.box.length ? pkm.party.box.map((s, i) => row(s, 'box', i)).join('') : '<div class="empty">电脑里没有寄存的宝可梦。队伍满 6 只后收服的会传送到这里。</div>')}
@@ -775,11 +1379,12 @@ async function onPanelClick(e) {
   if (b.dataset.tab) { panelTab = b.dataset.tab; renderPanel(); return; }
   const op = b.dataset.op, i = Number(b.dataset.i);
   if (op === 'close') { PD.getElementById('pkm-kanto-panel')?.remove(); return; }
+  if (op === 'mute') { try { const m = P.localStorage.getItem('pkmKantoMute') === '1'; P.localStorage.setItem('pkmKantoMute', m ? '0' : '1'); } catch (_) {} renderPanel(); return; }
   try {
     await writePkm(pkm => {
       const slots = pkm.party.slots;
       if (op === 'lead') slots.forEach((s, k) => { if (hasMon(s)) s.isLead = k === i; });
-      else if (op === 'follow') { const s = b.dataset.w === 'box' ? pkm.party.box[i] : slots[i]; if (!s.uid) s.uid = uid(); pkm.party.follow = pkm.party.follow === s.uid ? null : s.uid; }
+      else if (op === 'follow') { const s = b.dataset.w === 'box' ? pkm.party.box[i] : slots[i]; if (!s.uid) s.uid = uid(); pkm.party.follow = pkm.party.follow === s.uid ? null : s.uid; if (pkm.party.follow) { const snap = clone(s); setTimeout(() => { playCry(snap); cryBubble(snap); }, 650); } }
       else if (op === 'tobox') {
         if (slots.filter(hasMon).length <= 1) throw new Error('队伍里至少要留一只宝可梦');
         const s = slots[i]; const wasLead = s.isLead; s.isLead = false; delete s.slot; pkm.party.box.push(s);
@@ -838,7 +1443,9 @@ function playerEntries(pkm) {
     if (s.gender) e.gender = s.gender; if (s.shiny) e.shiny = true;
     if (s.hp != null && s.maxHp) { e.hp = Number(s.hp); e.maxHp = Number(s.maxHp); }
     if (s.status && s.status !== '濒死') e.status = s.status;
-    const iv = s.stats_meta?.ivs; if (iv && Object.values(iv).every(v => Number.isInteger(v))) e.ivs = iv;
+    const iv = s.stats_meta?.ivs; if (iv && K.STAT_KEYS.every(k => ivOk(iv[k]))) e.ivs = { ...iv };
+    // v1.3.4：招式剩余 PP 跨战斗继承（hp 为 null = 刚治疗过，全满）
+    if (s.hp != null && isObj(s.pp)) { const pp = {}; for (const m of e.moves) if (Number.isFinite(Number(s.pp[m]))) pp[m] = Number(s.pp[m]); if (Object.keys(pp).length) e.pp = pp; }
     return e;
   });
 }
@@ -847,7 +1454,16 @@ function engineConfig(spec, pkm, tag) {
   const type = String(cfg.type || 'trainer').toLowerCase();
   let team = Array.isArray(cfg.team) ? cfg.team : [];
   if (type === 'wild') team = team.slice(0, 1);
-  const enemy = team.map(t => (typeof t === 'string' ? { species: t, level: 5 } : { species: t.species || t.name, level: Number(t.level || t.lv) || 5, moves: Array.isArray(t.moves) ? t.moves : [], ability: t.ability, nature: t.nature, gender: t.gender, shiny: !!t.shiny }));
+  // v1.3.4：对手 / 野生宝可梦也有个体值和性格（按这场对战的 key 固定，重开同一场不会变；收服后沿用）
+  const band = ['gym', 'rival', 'boss', 'league'].includes(type) ? 'high' : null;
+  const enemy = team.map((t, i) => {
+    const e = typeof t === 'string' ? { species: t, level: 5 } : { species: t.species || t.name, level: Number(t.level || t.lv) || 5, moves: Array.isArray(t.moves) ? t.moves : [], ability: t.ability, nature: t.nature, gender: t.gender, shiny: !!t.shiny };
+    const r = rng(hash(String(spec.key || cfg.id || '') + '#' + i + '#' + e.species));
+    const giv = isObj(t?.ivs) && K.STAT_KEYS.every(k => ivOk(Number(t.ivs[k]))) ? Object.fromEntries(K.STAT_KEYS.map(k => [k, Number(t.ivs[k])])) : null;
+    e.ivs = giv || rollIvs(band, r);
+    if (!natureZh(e.nature)) e.nature = rollNature(r);
+    return e;
+  });
   const balls = Object.fromEntries(Object.entries(K.BALL_ZH).map(([id, zh]) => [id, Math.max(0, Math.floor(Number(pkm.player.bag[zh]) || 0))]));
   const out = { encounter: { type: type === 'wild' ? 'wild' : 'trainer' }, difficulty: cfg.difficulty || K.DIFFICULTY_BY_TYPE[type] || 'normal',
     p1: { entrants: [{ name: 'host-player', party: playerEntries(pkm) }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
@@ -909,24 +1525,41 @@ function monFromCapture(cap, enemy, cfgEnemy, pkm) {
   const mon = emptySlot(1);
   Object.assign(mon, {
     name: zhName, species: zhName, nickname: null, gender: spec.gender || cfgEnemy?.gender || null, lv: spec.level || enemy?.level || 5,
-    quality: 'medium', nature: zhNature(spec.nature) || K.NATURES[Math.floor(Math.random() * K.NATURES.length)], ability: zhAbility(spec.ability),
+    quality: null, nature: zhNature(spec.nature) || K.NATURES[Math.floor(Math.random() * K.NATURES.length)], ability: zhAbility(spec.ability),
     shiny: !!spec.shiny, moves: [0, 1, 2, 3].map(i => (spec.moves?.[i] ? zhMove(spec.moves[i]) : null)),
     hp: cap.hpAtCapture ?? enemy?.hp ?? null, maxHp: enemy?.maxHp ?? null, status: K.STATUS_TO_ZH[cap.statusAtCapture] || null,
     ball: K.BALL_ZH[cap.ball] || '精灵球', uid: uid(), met: `${dateText(pkm)} · ${placeText(pkm)}，用${K.BALL_ZH[cap.ball] || '精灵球'}收服`, notes: null,
   });
-  if (spec.ivs && Object.values(spec.ivs).every(v => Number.isInteger(v))) mon.stats_meta.ivs = { ...spec.ivs };
+  if (spec.ivs && K.STAT_KEYS.every(k => ivOk(spec.ivs[k]))) mon.stats_meta.ivs = { ...spec.ivs };
+  ensureIndividual(mon); // 资质按个体值推算；缺项补齐
   return mon;
 }
 async function applyResult(m, payload) {
   const outcome = payload.outcome || (payload.winner === 'player' ? 'victory' : payload.winner === 'enemy' ? 'defeat' : 'draw');
   const cfg = m.cfg, cfgTeam = Array.isArray(cfg.team) ? cfg.team : [];
   let placed = null, capturedName = null;
-  const summaryParts = [];
+  let summaryParts = [];
+  const bondNotes = [];
   const result = await writePkm(pkm => {
+    summaryParts = []; bondNotes.length = 0; placed = null; capturedName = null; // writePkm 可能重算
+    const won = outcome === 'victory' || outcome === 'captured';
     // 1) 我方体力 / 异常状态
     for (const p of payload.playerTeam || []) {
       const s = pkm.party.slots[p.hostSlot]; if (!hasMon(s)) continue;
       s.hp = p.fainted ? 0 : p.hp; s.maxHp = p.maxHp; s.status = p.fainted ? '濒死' : (K.STATUS_TO_ZH[p.status] || null);
+      // v1.3.4：剩余 PP 写回（按招式中文名记录；满的不记）
+      if (Array.isArray(p.moves)) {
+        const pp = {};
+        for (const name of (s.moves || []).filter(Boolean)) { const id = moveIdOf(name); const mv = p.moves.find(x => x.id === id); if (mv && Number.isFinite(mv.ppLeft) && mv.ppLeft < mv.pp) pp[name] = mv.ppLeft; }
+        s.pp = Object.keys(pp).length ? pp : null;
+      }
+      // v1.3.4：并肩作战加羁绊——出场 → 信任 +1；赢了 → 热情 +1
+      if (p.participated !== false) {
+        ensureIndividual(s);
+        const av = s.friendship.avs;
+        av.trust = clampAv((av.trust || 0) + 1); if (won) av.passion = clampAv((av.passion || 0) + 1);
+        bondNotes.push(`${monName(s)}信任+1${won ? '、热情+1' : ''}`);
+      }
     }
     // 2) 精灵球消耗（按差值扣，避免覆盖期间的其他变化）
     for (const [id, zh] of Object.entries(K.BALL_ZH)) {
@@ -948,6 +1581,7 @@ async function applyResult(m, payload) {
     pkm.battle.count += 1; if (outcome === 'victory') pkm.battle.wins += 1;
     summaryParts.push(`${OUTCOME_ZH[outcome] || '结束'}${cfg.opponent ? ' · 对手：' + cfg.opponent : ''} · ${payload.turns || 0} 回合`);
     if (capturedName) summaryParts.push(`收服了${capturedName}（${placed}）`);
+    if (bondNotes.length) summaryParts.push('羁绊：' + bondNotes.join('，'));
     const summary = summaryParts.join('；');
     pkm.battle.lastResult = summary;
     if (cfg.id && !pkm.battle.done.includes(cfg.id)) { pkm.battle.done.push(cfg.id); if (pkm.battle.done.length > 200) pkm.battle.done.splice(0, pkm.battle.done.length - 200); }
@@ -973,8 +1607,9 @@ async function applyResult(m, payload) {
     `对手：${res.enemy.map(p => `${p.species} Lv${p.lv} ${outcome === 'captured' && !p.fainted ? '被收服' : p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}`}`).join('；')}`,
     res.capture ? `收服：用${res.capture.ball}收服了 ${res.capture.species} Lv${res.capture.level}，已放进${placed}。` : '',
     used.length ? `消耗：${used.join('、')}` : '',
+    bondNotes.length ? `羁绊（脚本已加）：${bondNotes.join('，')}` : '',
     line ? `对手的台词（供续写）：「${line}」` : '',
-    '（变量已写入：体力/状态、精灵球、收服入队、图鉴。请按此结果续写战斗经过，不改写胜负，也不要重复写入这些变量。）'].filter(Boolean).join('\n');
+    '（变量已写入：体力/状态、剩余PP、精灵球、收服入队、图鉴、战斗羁绊。请按此结果续写战斗经过，不改写胜负，也不要重复写入这些变量。）'].filter(Boolean).join('\n');
   const text = `<pkm_result>${JSON.stringify(res)}</pkm_result>\n${human}`;
   fillInput(text);
   return { summary: result.summary, outcomeZh: OUTCOME_ZH[outcome] || '结束', text };
@@ -1021,7 +1656,19 @@ function onChatEvent() { eventCache = null; initvarCache = null; lastInjection =
 function onMessageReceived(id) {
   const mesid = Number.isInteger(id) ? id : lastAiId();
   refreshInjection(); refreshAll();
-  setTimeout(() => { try { if (!destroyed && needsSync(mesid)) writePkm(pkm => { applySync(pkm, mesid); }).catch(e => LOG('同步失败', e)); } catch (e) { LOG(e); } }, 2500);
+  scheduleSync(mesid);
+}
+// v1.3.4：等 MVU 先处理完这一楼再同步；MVU 一直没有写入（没装、报错）时，按 AI 的 JSONPatch 自己写入
+const SYNC_DELAYS = [2500, 6000, 12000];
+function scheduleSync(mesid, n = 0) {
+  setTimeout(() => {
+    if (destroyed) return;
+    try {
+      const own = hasOwnStat(mesid), mvu = !!(W.Mvu || P.Mvu);
+      if (!own && mvu && n < SYNC_DELAYS.length - 1 && parsePatchOps(chat()[mesid]?.mes).length) { scheduleSync(mesid, n + 1); return; }
+      if (needsSync(mesid, { full: !own })) writePkm(pkm => { applySync(pkm, mesid, { full: !hasOwnStat(mesid) && findStat()?.id !== mesid }); }).catch(e => LOG('同步失败', e));
+    } catch (e) { LOG(e); }
+  }, n === 0 ? SYNC_DELAYS[0] : SYNC_DELAYS[n] - SYNC_DELAYS[n - 1]);
 }
 
 function on(evName, fn) {
@@ -1045,7 +1692,7 @@ async function start() {
     if (typeof W.waitGlobalInitialized === 'function') await Promise.race([W.waitGlobalInitialized('Mvu'), sleep(6000)]);
     const mvu = W.Mvu || P.Mvu;
     if (mvu?.events?.VARIABLE_UPDATE_ENDED && typeof W.eventOn === 'function') {
-      W.eventOn(mvu.events.VARIABLE_UPDATE_ENDED, variables => { try { const pkm = variables?.stat_data?.pkm; if (pkm) { normalize(pkm); applySync(pkm, lastAiId()); } } catch (e) { LOG(e); } setTimeout(() => { refreshAll(); refreshInjection(); }, 50); });
+      W.eventOn(mvu.events.VARIABLE_UPDATE_ENDED, variables => { try { const pkm = variables?.stat_data?.pkm; if (pkm) { normalize(pkm); applySync(pkm, lastAiId()); ensureAllIndividuals(pkm); } } catch (e) { LOG(e); } setTimeout(() => { refreshAll(); refreshInjection(); }, 50); });
     }
   } catch (e) { LOG('MVU 钩子未安装（不影响主要功能）', e); }
   onChatEvent();

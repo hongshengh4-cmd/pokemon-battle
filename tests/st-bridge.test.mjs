@@ -44,4 +44,54 @@ test('Level-up table gives early Kanto Pokemon low-level moves (no Explosion at 
     for (const id of early) { assert.ok(moves[id], id); assert.ok((moves[id].basePower || 0) <= 60, sp + ':' + id); }
   }
 });
+test('Opening screen images exist for every mode and starter', () => {
+  const src = read('st-bridge/bridge.js');
+  for (const f of ['hero.webp', 'logo-pokemon.webp', 'oak-lab.webp']) assert.ok(fs.existsSync(new URL('st-bridge/img/' + f, root)), f);
+  for (const m of Object.keys(K.MODE_INFO)) { const mm = src.match(new RegExp(m + ": \\{ img: '([^']+)'")); assert.ok(mm, m); assert.ok(fs.existsSync(new URL('st-bridge/img/' + mm[1], root)), mm[1]); }
+  for (const n of Object.keys(K.STARTERS)) { const mm = src.match(new RegExp(n + ": \\{ img: '([^']+)'")); assert.ok(mm, n); assert.ok(fs.existsSync(new URL('st-bridge/img/starter-' + mm[1] + '.webp', root)), n); }
+});
+
+// ---------- v1.3.4 ----------
+import vm from 'node:vm';
+const ectx = { console, Math, JSON, Object, Array, Number, String, Boolean, Promise, Error, TypeError, Set, Map }; ectx.globalThis = ectx; vm.createContext(ectx);
+for (const p of ['src/engine/typechart.js', 'src/engine/mechanics.js', 'src/engine/battle.js', 'src/engine/capture.js']) vm.runInContext(read(p), ectx);
+const E = ectx.PKMBattle; E.setData(JSON.parse(read('src/data/pokedex.json')), moves);
+const zhNat = Object.fromEntries(Object.entries(zh.natures).map(([id, n]) => [n, id]));
+test('Bridge nature table matches the battle engine (Chinese → effect)', () => {
+  for (const n of K.NATURES) assert.ok(zhNat[n], n);
+  const src = read('src/engine/battle.js');
+  for (const [n, [up, down]] of Object.entries(K.NATURE_EFFECT)) {
+    const p = E.createPokemon('mew', 50, ['tackle'], { nature: zhNat[n], ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 } });
+    const q = E.createPokemon('mew', 50, ['tackle'], { nature: 'serious', ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 } });
+    assert.ok(p.stats[up] > q.stats[up], n + ' raises ' + up); assert.ok(p.stats[down] < q.stats[down], n + ' lowers ' + down);
+  }
+  assert.equal(Object.keys(K.NATURE_EFFECT).length, 20); assert.ok(src.includes('NATURES'));
+});
+test('Same species and level differ by IVs; stats table for the bridge matches pokedex', () => {
+  const a = E.createPokemon('charmander', 5, ['scratch'], { ivs: { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 } });
+  const b = E.createPokemon('charmander', 5, ['scratch'], { ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 } });
+  assert.ok(b.stats.hp > a.stats.hp && b.stats.spe > a.stats.spe);
+  const st = JSON.parse(read('st-bridge/kanto-stats.json')), dex = JSON.parse(read('src/data/pokedex.json'));
+  assert.deepEqual(st.s.charmander, Object.values(dex.charmander.baseStats)); assert.equal(st.m.scratch, 35); assert.equal(st.m.ember, moves.ember.pp);
+});
+test('Struggle when every move is out of PP (PP now carries between battles)', () => {
+  const me = E.createPokemon('pikachu', 20, ['thundershock']); me.moves[0].ppLeft = 0;
+  const foe = E.createPokemon('snorlax', 20, ['tackle']);
+  const bt = new E.Battle([me], [foe], { seed: 3 });
+  const hp0 = me.hp, foeHp0 = foe.hp;
+  bt.turn({ kind: 'move', index: 0, struggle: true });
+  assert.ok(foe.hp < foeHp0, 'struggle deals damage'); assert.ok(me.hp < hp0, 'struggle recoil'); assert.equal(me.moves[0].ppLeft, 0);
+  // AI with no PP also struggles instead of using a 0-PP move forever
+  const f2 = E.createPokemon('rattata', 10, ['tackle']); f2.moves[0].ppLeft = 0;
+  const bt2 = new E.Battle([E.createPokemon('onix', 30, ['harden'])], [f2], { seed: 1 });
+  assert.equal(bt2.aiAction(1).struggle, true);
+});
+test('Cry table uses known species; result payload carries PP and individual values', () => {
+  for (const n of Object.keys(K.CRIES)) assert.ok(zhSpecies.has(n), n);
+  assert.ok(!K.CRIES['小火龙'].some(x => x.includes('小火小火')));
+  const app = read('src/ui/app.js');
+  assert.ok(app.includes('ppLeft: m.ppLeft') && app.includes('ppById') && app.includes('participated'));
+  const br = read('st-bridge/bridge.js');
+  for (const fn of ['function ensureIndividual', 'function reconcileBonds', 'function parsePatchOps', 'function playCry', 'function statBlock', 'function scheduleSync']) assert.ok(br.includes(fn), fn);
+});
 console.log(`ST bridge tests: ${passed}/${passed} passed.`);

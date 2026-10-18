@@ -1106,6 +1106,7 @@
 
     const moves = $('moves');
     moves.innerHTML = '';
+    const foeNow = battle.cur(1);
     me.moves.forEach((m, i) => {
       const shown = PKMBattle.transformMove(me, m, selectedMechanic);
       const b = document.createElement('button');
@@ -1113,9 +1114,24 @@
       b.className = `move-btn type-${String(shown.type || '').toLowerCase()}`;
       b.disabled = over || animating || battle.pendingSwitch !== null || m.ppLeft <= 0 || (me.choiceLockedMove && me.choiceLockedMove !== m.id) || me.volatile.disableMove === m.id || (selectedMechanic === 'z' && m.type !== me.zType);
       b.innerHTML = `${displayMoveName(shown, m)}<small>${zhType(shown.type)} · ${zhCat(shown.category)}${shown.basePower ? ' · 威力 ' + shown.basePower : ''} · 招式点数 ${m.ppLeft}/${m.pp}</small>`;
-      b.onclick = () => act({ kind: 'move', index: i, mechanic: selectedMechanic });
-      moves.appendChild(b);
+      const mech = selectedMechanic;
+      const useIt = () => act({ kind: 'move', index: i, mechanic: mech });
+      b.onclick = () => { if (Date.now() < suppressMoveClickUntil) return; useIt(); };
+      // v1.3.5：长按招式 / 点 ⓘ 查看详细说明
+      const ctxFn = () => ({ move: shown, base: m, user: me, foe: foeNow, name: displayMoveName(shown, m), foeName: foeNow ? displayPokemonName(foeNow) : '', usable: !b.disabled, onUse: useIt });
+      moves.appendChild(moveCell(b, ctxFn));
     });
+    // v1.3.4：招式点数会跨战斗继承；全部用完时只能“挣扎”
+    if (!over && battle.pendingSwitch === null && !me.moves.some(m => m.ppLeft > 0 && me.volatile.disableMove !== m.id)) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'move-btn type-normal';
+      b.disabled = animating;
+      b.innerHTML = `挣扎<small>招式点数已经用完 · 威力 50 · 会受到反作用力伤害</small>`;
+      const useIt = () => act({ kind: 'move', index: 0, struggle: true });
+      b.onclick = () => { if (Date.now() < suppressMoveClickUntil) return; useIt(); };
+      const sm = { id: 'struggle', ...(PKMBattle._moves?.struggle || { name: 'Struggle', type: 'Normal', category: 'Physical', basePower: 50, accuracy: true, pp: 1, priority: 0, target: 'normal' }), ppLeft: 1, pp: 1 };
+      moves.appendChild(moveCell(b, () => ({ move: sm, base: sm, user: me, foe: foeNow, name: '挣扎', foeName: foeNow ? displayPokemonName(foeNow) : '', usable: !b.disabled, onUse: useIt })));
+    }
     const sw = $('switches');
     sw.innerHTML = '';
     battle.teams[0].forEach((p, i) => {
@@ -1149,13 +1165,84 @@
     renderBalls(); renderCommands();
   }
 
+  // ---------- v1.3.5：招式详细说明（长按招式 / 点 ⓘ / 右键） ----------
+  let suppressMoveClickUntil = 0;
+  function moveInfoOf(c) {
+    return PKMMoveInfo.describe(c.move, { user: c.user, foe: c.foe, baseMove: c.base, name: c.name, foeName: c.foeName, zhType, zhCat });
+  }
+  function moveCell(btn, ctxFn) {
+    const cell = document.createElement('div');
+    cell.className = 'move-cell';
+    cell.appendChild(btn);
+    if (!window.PKMMoveInfo) return cell;
+    try { btn.title = PKMMoveInfo.tooltip(moveInfoOf(ctxFn())); } catch (_) {}
+    const badge = document.createElement('span');
+    badge.className = 'move-info-btn'; badge.textContent = 'i';
+    badge.setAttribute('role', 'button'); badge.tabIndex = 0;
+    badge.setAttribute('aria-label', '查看招式说明'); badge.title = '查看招式说明';
+    const openNow = e => { if (e) { e.preventDefault(); e.stopPropagation(); } openMoveInfo(ctxFn()); };
+    badge.addEventListener('pointerdown', e => e.stopPropagation());
+    badge.addEventListener('click', openNow);
+    badge.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') openNow(e); });
+    let timer = null, sx = 0, sy = 0;
+    const cancel = () => { if (timer) clearTimeout(timer); timer = null; };
+    cell.addEventListener('pointerdown', e => {
+      if (e.button > 0 || e.target.closest('.move-info-btn')) return;
+      sx = e.clientX; sy = e.clientY; cancel();
+      timer = setTimeout(() => {
+        timer = null;
+        // 手指 / 鼠标还按着：松开之前产生的点击（包括落在弹出卡片上的那一下）都忽略，松开后再保护 400ms
+        suppressMoveClickUntil = Date.now() + 60000;
+        const release = () => { suppressMoveClickUntil = Date.now() + 400; document.removeEventListener('pointerup', release, true); document.removeEventListener('pointercancel', release, true); };
+        document.addEventListener('pointerup', release, true); document.addEventListener('pointercancel', release, true);
+        openMoveInfo(ctxFn());
+        try { navigator.vibrate && navigator.vibrate(12); } catch (_) {}
+      }, 450);
+    });
+    cell.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 12) cancel(); });
+    for (const t of ['pointerup', 'pointercancel', 'pointerleave']) cell.addEventListener(t, cancel);
+    cell.addEventListener('contextmenu', e => { e.preventDefault(); cancel(); suppressMoveClickUntil = Date.now() + 400; openMoveInfo(ctxFn()); });
+    cell.appendChild(badge);
+    return cell;
+  }
+  function closeMoveInfo() {
+    const old = document.getElementById('move-info-sheet');
+    if (old) old.remove();
+    document.removeEventListener('keydown', moveInfoKey, true);
+  }
+  function moveInfoKey(e) { if (e.key === 'Escape') { e.preventDefault(); closeMoveInfo(); } }
+  function openMoveInfo(c) {
+    if (!window.PKMMoveInfo || !c || !c.move) return;
+    closeMoveInfo();
+    let info;
+    try { info = moveInfoOf(c); } catch (err) { console.warn('[move-info]', err); return; }
+    const wrap = document.createElement('div');
+    wrap.id = 'move-info-sheet'; wrap.className = 'move-sheet';
+    const card = document.createElement('div');
+    card.className = `move-sheet-card type-${String(c.move.type || '').toLowerCase()}`;
+    card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true'); card.setAttribute('aria-label', '招式说明：' + info.name);
+    card.innerHTML = `<div class="mi-body">${PKMMoveInfo.html(info)}</div><div class="mi-actions">${c.usable && !animating ? '<button type="button" class="mi-use">使用这个招式</button>' : ''}<button type="button" class="mi-close">关闭</button></div>`;
+    wrap.appendChild(card);
+    wrap.addEventListener('click', e => {
+      if (Date.now() < suppressMoveClickUntil) return; // 长按松手时那一下点击不算
+      if (e.target === wrap || e.target.closest('.mi-close')) { closeMoveInfo(); return; }
+      if (e.target.closest('.mi-use')) { closeMoveInfo(); if (c.onUse) c.onUse(); }
+    });
+    wrap.addEventListener('contextmenu', e => e.preventDefault());
+    document.body.appendChild(wrap);
+    document.addEventListener('keydown', moveInfoKey, true);
+    const btn = card.querySelector('.mi-use') || card.querySelector('.mi-close');
+    try { btn.focus({ preventScroll: true }); } catch (_) {}
+  }
+
   function announceResult() {
     if (!battle || battle.winner === null || animating || announcedBattle === battle) return;
     announcedBattle = battle;
     const payload = battle.result();
     payload.hostTag = hostTag;
-    payload.playerTeam.forEach((p, i) => { const src = battle.teams[0][i]; if (src) { p.level = src.level; p.hostSlot = src.hostSlot ?? null; p.name = src.name; } });
-    payload.enemyTeam.forEach((p, i) => { const src = battle.teams[1][i]; if (src) { p.level = src.level; p.name = src.name; p.shiny = !!src.shiny; p.gender = src.gender || null; } });
+    const indiv = src => ({ nature: src.nature || '', ivs: { ...src.ivs }, stats: { ...src.stats } });
+    payload.playerTeam.forEach((p, i) => { const src = battle.teams[0][i]; if (src) { Object.assign(p, indiv(src)); p.level = src.level; p.hostSlot = src.hostSlot ?? null; p.name = src.name; p.moves = src.moves.map(m => ({ id: m.id, ppLeft: m.ppLeft, pp: m.pp })); p.participated = !!src._participated || i === 0; } });
+    payload.enemyTeam.forEach((p, i) => { const src = battle.teams[1][i]; if (src) { Object.assign(p, indiv(src)); p.level = src.level; p.name = src.name; p.shiny = !!src.shiny; p.gender = src.gender || null; } });
     postHost('PKM_BATTLE_RESULT', payload);
   }
   function after() { render(); announceResult(); }
@@ -1170,7 +1257,8 @@
     if (a.kind === 'move') {
       const me = battle.cur(0), base = me?.moves[a.index];
       mech = a.mechanic || selectedMechanic;
-      if (base) {
+      if (a.struggle) chosen = { kind: 'move', mechanic: null, type: 'Normal', category: 'Physical', target: 'normal', name: '挣扎' };
+      else if (base) {
         const shown = PKMBattle.transformMove(me, base, mech);
         chosen = { kind: 'move', mechanic: mech, type: shown.type, category: shown.category, target: shown.target || base.target || 'normal', name: displayMoveName(shown, base) };
       }
@@ -1239,16 +1327,26 @@
       const species = resolveSpeciesId(rawSpecies);
       if (!PKMBattle._dex[species]) throw new Error(`对战系统里找不到宝可梦“${rawSpecies}”。请检查对战块里的 species 是否写成官方中文名。`);
       const level = Math.max(1, Math.min(100, parseInt(spec.lv || spec.level || 50, 10) || 50));
-      let moves = (Array.isArray(spec.moves) ? spec.moves : []).filter(Boolean).map(resolveMoveId).filter(Boolean);
+      // v1.3.4：宿主传来的剩余 PP。pp 可以是 {招式名: 剩余} 或与 moves 对齐的数组；缺省 = 满
+      const ppById = {};
+      const rawMoves = Array.isArray(spec.moves) ? spec.moves : [];
+      if (Array.isArray(spec.pp)) rawMoves.forEach((mv, i) => { const id = mv ? resolveMoveId(mv) : null; const v = spec.pp[i]; if (id && v !== null && v !== undefined && Number.isFinite(Number(v)) && !(id in ppById)) ppById[id] = Number(v); });
+      else if (spec.pp && typeof spec.pp === 'object') for (const [mv, v] of Object.entries(spec.pp)) { const id = resolveMoveId(mv); if (id && v !== null && Number.isFinite(Number(v))) ppById[id] = Number(v); }
+      let moves = rawMoves.filter(Boolean).map(resolveMoveId).filter(Boolean);
       moves = [...new Set(moves)].slice(0, 4);
       if (!moves.length) moves = hostMode ? levelUpMoves(species, level) : autoMoves(species, level);
       const opts = { ...spec };
-      delete opts.species; delete opts.moves; delete opts.hp; delete opts.maxHp; delete opts.status;
+      delete opts.species; delete opts.moves; delete opts.hp; delete opts.maxHp; delete opts.status; delete opts.pp; delete opts.hostSlot;
+      if (opts.ivs && typeof opts.ivs === 'object') { const iv = {}; for (const k of ['hp', 'atk', 'def', 'spa', 'spd', 'spe']) { const v = Number(opts.ivs[k]); if (Number.isInteger(v) && v >= 0 && v <= 31) iv[k] = v; } opts.ivs = iv; }
+      else delete opts.ivs;
+      // 宿主模式下没给个体值的（旧版桥接 / AI 自写的阵容）随机生成，避免同种同级数值完全相同
+      if (hostMode && !opts.ivs) opts.ivs = Object.fromEntries(['hp', 'atk', 'def', 'spa', 'spd', 'spe'].map(k => [k, Math.floor(Math.random() * 32)]));
       if (opts.ability) { const dexAbilities = PKMBattle._dex[species].abilities || []; const want = String(opts.ability); const hit = dexAbilities.find(a => normId(a) === normId(want) || zhAbility(a, '') === want); opts.ability = hit || undefined; }
       if (opts.nature) { const want = String(opts.nature); const hit = Object.entries(ZH.natures || {}).find(([id, zh]) => zh === want || id === normId(want)); opts.nature = hit ? hit[0] : ''; }
       if (opts.gender) opts.gender = GENDER_ALIASES[opts.gender] || null;
       if (opts.nickname === rawSpecies) delete opts.nickname;
       const p = PKMBattle.createPokemon(species, level, moves, opts);
+      for (const mv of p.moves) if (mv.id in ppById) mv.ppLeft = Math.max(0, Math.min(mv.pp ?? 10, Math.round(ppById[mv.id])));
       const maxHp = Number(spec.maxHp), hp = Number(spec.hp);
       if (spec.hp !== null && spec.hp !== undefined && Number.isFinite(hp)) {
         const ratio = Number.isFinite(maxHp) && maxHp > 0 ? hp / maxHp : hp / p.maxHp;
@@ -1529,6 +1627,7 @@
       fetch('./src/data/zh-names.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('./src/data/sprite-map.json?v=0.9.5').then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('./src/data/levelup.json?v=1.3.2').then(r => r.ok ? r.json() : {}).then(x => { LEVELUP = x || {}; }).catch(() => {}),
+      fetch('./src/data/move-desc-zh.json?v=1.3.5').then(r => r.ok ? r.json() : {}).then(x => { if (window.PKMMoveInfo) PKMMoveInfo.setDesc(x); }).catch(() => {}),
     ]);
     ZH = zh || {};
     SPRITES = spriteMap?.entries || {};
@@ -1571,7 +1670,7 @@
     dataReady = true;
     if (pendingHostConfig) { const cfg = pendingHostConfig; pendingHostConfig = null; startHostBattle(cfg); return; }
     if (q) { try { startBattle(JSON.parse(q)); return; } catch (_) {} }
-    if (EMBED) { $('log').textContent = '对战系统已就绪，正在等待角色卡发送对战配置……'; postHost('PKM_BATTLE_READY', { version: '1.3.2' }); return; }
+    if (EMBED) { $('log').textContent = '对战系统已就绪，正在等待角色卡发送对战配置……'; postHost('PKM_BATTLE_READY', { version: '1.3.5' }); return; }
     startBattle(null);
   }
 
@@ -1590,7 +1689,7 @@
     if (d.type === 'PKM_BATTLE_CONFIG' && d.payload) {
       if (!dataReady) { pendingHostConfig = d.payload; return; }
       startHostBattle(d.payload);
-    } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: '1.3.2' });
+    } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: '1.3.5' });
   });
 
   init().catch(e => { $('log').textContent = '数据加载失败：' + e.message + '\n（请通过网页服务打开本页，不要直接双击文件）'; });

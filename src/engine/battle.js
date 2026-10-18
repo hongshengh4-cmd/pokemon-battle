@@ -229,6 +229,10 @@
   }
 
   function effStat(p, key) { return battleStat(p, key); }
+  function struggleMove() {
+    const m = MOVES.struggle || { name: 'Struggle', type: 'Normal', category: 'Physical', basePower: 50, accuracy: true, pp: 1, priority: 0, flags: { contact: 1 }, target: 'normal' };
+    return { id: 'struggle', ...m, target: 'normal', ppLeft: 1, pp: 1 };
+  }
 
   function stabMultiplier(attacker, move) {
     if (!move?.type) return 1;
@@ -288,6 +292,39 @@
     if (mechanic === 'z' && user.mechanic === 'z' && user.zType === baseMove.type) return makeZMove(user, baseMove);
     if (user.dynamaxed) return makeMaxMove(user, baseMove);
     return baseMove;
+  }
+
+  // v1.3.5：威力为 0 的特殊伤害招式（固定伤害 / 按体重、速度、体力计算威力 / 一击必杀）
+  const FIXED_DAMAGE_IDS = ['seismictoss', 'nightshade', 'sonicboom', 'dragonrage', 'superfang', 'naturesmadness', 'ruination', 'psywave', 'endeavor', 'finalgambit'];
+  const VARIABLE_POWER_IDS = ['lowkick', 'grassknot', 'heavyslam', 'heatcrash', 'gyroball', 'electroball', 'flail', 'reversal', 'present', 'return', 'frustration'];
+  const weightOf = p => DEX[p.speciesId]?.weightkg || 50;
+  function specialDamageInfo(user, target, move, rnd = 0.5) {
+    if (!move || move.basePower || move.category === 'Status') return null;
+    const id = move.id;
+    if (move.ohko) return { kind: 'ohko' };
+    if (FIXED_DAMAGE_IDS.includes(id)) {
+      let fixed = 0;
+      if (id === 'seismictoss' || id === 'nightshade') fixed = user.level;
+      else if (id === 'sonicboom') fixed = 20;
+      else if (id === 'dragonrage') fixed = 40;
+      else if (id === 'superfang' || id === 'naturesmadness' || id === 'ruination') fixed = Math.max(1, Math.floor(target.hp / 2));
+      else if (id === 'psywave') fixed = Math.max(1, Math.floor(user.level * (0.5 + rnd)));
+      else if (id === 'endeavor') fixed = Math.max(0, target.hp - user.hp);
+      else if (id === 'finalgambit') fixed = user.hp;
+      return { kind: 'fixed', damage: fixed };
+    }
+    if (VARIABLE_POWER_IDS.includes(id)) {
+      let bp = 0;
+      if (id === 'lowkick' || id === 'grassknot') { const w = weightOf(target); bp = w < 10 ? 20 : w < 25 ? 40 : w < 50 ? 60 : w < 100 ? 80 : w < 200 ? 100 : 120; }
+      else if (id === 'heavyslam' || id === 'heatcrash') { const r = weightOf(user) / Math.max(0.1, weightOf(target)); bp = r >= 5 ? 120 : r >= 4 ? 100 : r >= 3 ? 80 : r >= 2 ? 60 : 40; }
+      else if (id === 'gyroball') bp = Math.min(150, Math.floor(25 * effStat(target, 'spe') / Math.max(1, effStat(user, 'spe'))) + 1);
+      else if (id === 'electroball') { const r = effStat(user, 'spe') / Math.max(1, effStat(target, 'spe')); bp = r >= 4 ? 150 : r >= 3 ? 120 : r >= 2 ? 80 : r >= 1 ? 60 : 40; }
+      else if (id === 'flail' || id === 'reversal') { const x = Math.floor(48 * user.hp / user.maxHp); bp = x <= 1 ? 200 : x <= 4 ? 150 : x <= 9 ? 100 : x <= 16 ? 80 : x <= 32 ? 40 : 20; }
+      else if (id === 'present') bp = rnd < 0.4 ? 40 : rnd < 0.7 ? 80 : 120;
+      else if (id === 'return' || id === 'frustration') bp = 102;
+      return { kind: 'power', basePower: bp };
+    }
+    return null;
   }
 
   function estimateDamage(attacker, defender, move, rngVal = 0.925, opts = {}) {
@@ -382,6 +419,7 @@
       const p = this.cur(side);
       if (!p || p.fainted) return;
       p.enteredTurn = this.turnCount;
+      p._participated = true;
       p._enteredThisTurn = !initial;
       p.choiceLockedMove = null;
       this.applyEntryHazards(side, p);
@@ -666,7 +704,7 @@
         if (mistakes && this.rng() < mistakes) score = this.rng() * 50;
         if (!best || score > best.score) best = { kind: 'move', index: i, score };
       }
-      if (!best) return { kind: 'move', index: 0 };
+      if (!best) return { kind: 'move', index: 0, struggle: true };
       const chosenMove = me.moves[best.index];
       const used = this.mechanicUsed?.[side];
       if (used && chosenMove) {
@@ -734,7 +772,10 @@
         .forEach(a => this.activateMechanic(a.side, a.action.mechanic));
       const movers = actions.filter(a => a.action.kind === 'move').map(a => {
         const p = this.cur(a.side);
-        const move = p.moves[a.action.index] || p.moves[0];
+        // v1.3.4：PP 会跨战斗继承，招式点数全部用完时改用“挣扎”（反伤 1/4 最大体力）
+        const usable = p.moves.filter(m => m.ppLeft > 0 && p.volatile.disableMove !== m.id);
+        const picked = p.moves[a.action.index];
+        const move = (a.action.struggle || !usable.length) ? struggleMove() : (picked || p.moves[0]);
         const prio = this.movePriority(p, move, this.cur(this.other(a.side)));
         const speed = effStat(p, 'spe');
         return { ...a, move, prio, speed, tie: this.rng(), mechanic: a.action.mechanic || null };
@@ -747,6 +788,10 @@
         const user = this.cur(m.side);
         if (user.fainted) continue;
         this.useMove(m.side, user, this.cur(this.other(m.side)), m.move, { mechanic: m.mechanic });
+        if (m.move.id === 'struggle' && !user.fainted && this._struggled) this.applyDamage(user, Math.max(1, Math.floor(user.maxHp / 4)), `${user.name} 受到了反作用力伤害！`);
+        this._struggled = false;
+        if (this._boom === user && !user.fainted && user.hp > 0) { user.hp = 0; this.say(`${user.name} 倒下了！`); }
+        this._boom = null;
         this.checkFaints();
       }
       this.endOfTurn();
@@ -787,11 +832,13 @@
       if (wantsZ) move = makeZMove(user, baseMove);
       if (user.dynamaxed) move = makeMaxMove(user, baseMove);
       if (!this.canMove(user, baseMove)) return;
-      if (baseMove.ppLeft > 0) baseMove.ppLeft--;
+      if (baseMove.id === 'struggle') { this._struggled = true; this.say(`${user.name} 已经没有可以使用的招式了！`); }
+      if (baseMove.ppLeft > 0 && baseMove.id !== 'struggle') baseMove.ppLeft--;
       if (wantsZ) { this.mechanicUsed[side].z = true; this.say(`💥 ${user.name} 发动了Ｚ招式！`); }
       if (['choiceband', 'choicespecs', 'choicescarf'].includes(itemId(user)) && !user.choiceLockedMove) user.choiceLockedMove = baseMove.id;
       this.say(`${user.name} 使用了 ${move.name}！`);
-      const selfTarget = !move.basePower && (move.heal || (move.boosts && move.target === 'self') || move.status === undefined && move.volatileStatus === undefined);
+      if (move.selfdestruct === 'always' || baseMove.id === 'finalgambit') this._boom = user; // v1.3.5：大爆炸 / 自爆 / 搏命，使用后自己倒下
+      const selfTarget = move.category === 'Status' && !move.basePower && (move.heal || (move.boosts && move.target === 'self') || move.status === undefined && move.volatileStatus === undefined);
       const realTarget = (move.target === 'self' || selfTarget) ? user : target;
       if (realTarget !== user && hasAbility(realTarget, 'pressure') && baseMove.ppLeft > 0) baseMove.ppLeft--;
       const priority = this.movePriority(user, move, realTarget);
@@ -809,8 +856,12 @@
       }
       // Accuracy
       let acc = move.accuracy === true || move.accuracy == null ? 100 : move.accuracy;
+      if (move.ohko && realTarget !== user) {
+        if (user.level < realTarget.level) { this.say(`对 ${realTarget.name} 没有效果……（等级比对手低）`); return; }
+        acc = 30 + (user.level - realTarget.level);
+      }
       const targetEvasion = hasAbility(user, 'keeneye') ? Math.min(0, realTarget.stages.evasion || 0) : (realTarget.stages.evasion || 0);
-      acc *= stageMult((user.stages.accuracy || 0), 'acc') * stageMult(targetEvasion, 'eva');
+      if (!move.ohko) acc *= stageMult((user.stages.accuracy || 0), 'acc') * stageMult(targetEvasion, 'eva');
       if (move.category === 'Physical' && hasAbility(user, 'hustle')) acc *= 0.8;
       if (this.field.gravity > 0) acc *= 5 / 3;
       if (this.rng() * 100 > acc) { this.say(`但是没有命中 ${realTarget.name}！`); return; }
@@ -843,6 +894,24 @@
             if (dealt > 0) this.onDamagingHit(user, realTarget, move, dealt, crit, est.eff, beforeHp);
             if (move.drain && !user.fainted) this.heal(user, Math.max(1, Math.floor(dealt * move.drain[0] / move.drain[1])), '吸取了体力');
             if (move.recoil && !user.fainted && !hasAbility(user, 'rockhead')) this.applyDamage(user, Math.max(1, Math.floor(dealt * move.recoil[0] / move.recoil[1])), `${user.name} 受到了反作用力伤害！`);
+          }
+        } else if (realTarget !== user && specialDamageInfo(user, realTarget, move)) {
+          // v1.3.5：固定伤害 / 特殊威力 / 一击必杀
+          const sp = specialDamageInfo(user, realTarget, move, this.rng());
+          const probe = estimateDamage(user, realTarget, { ...move, basePower: sp.basePower || 1 }, 1);
+          if (probe.eff === 0) { this.say(`对 ${realTarget.name} 没有效果……`); connected = false; }
+          else if (sp.kind === 'fixed' && sp.damage <= 0) { this.say('但是失败了！'); connected = false; }
+          else {
+            anyHit = true;
+            const beforeHp = realTarget.hp;
+            let dmg, eff = 1;
+            if (sp.kind === 'ohko') dmg = realTarget.hp;
+            else if (sp.kind === 'fixed') dmg = sp.damage;
+            else { const est = estimateDamage(user, realTarget, { ...move, basePower: sp.basePower }, 0.85 + this.rng() * 0.15); dmg = est.damage; eff = est.eff; }
+            const dealt = this.applyMoveDamage(realTarget, dmg, user, move);
+            if (sp.kind === 'ohko' && realTarget.hp <= 0) this.say('一击必杀！');
+            if (eff > 1) this.say('效果绝佳！'); else if (eff < 1 && eff > 0) this.say('效果不理想……');
+            if (dealt > 0) this.onDamagingHit(user, realTarget, move, dealt, false, eff, beforeHp);
           }
         } else anyHit = true;
         if (hits > 1 && h === hits - 1 && anyHit) this.say(`击中了 ${hits} 次！`);
@@ -913,6 +982,21 @@
           this.say('场上的钉子被打扫干净了！');
           this.changeStages(user, { atk: 1, spe: 1 }, user);
         }
+        // v1.3.5：几个常见的变化招式
+        if (move.id === 'rest') {
+          if (user.hp >= user.maxHp) this.say('但是失败了！（体力已经是满的）');
+          else if (hasAbility(user, 'insomnia', 'vitalspirit', 'comatose')) this.say(`${user.name} 无法入睡，但是失败了！`);
+          else { user.status = 'slp'; user.sleepTurns = 3; delete user.toxicCounter; const real = user.maxHp - user.hp; user.hp = user.maxHp; this.say(`${user.name} 睡着了，并且回复了全部体力（+${real}）！`); }
+        }
+        if (move.id === 'haze') {
+          for (const sd of [0, 1]) { const p = this.cur(sd); if (p) for (const k of Object.keys(p.stages)) p.stages[k] = 0; }
+          this.say('所有宝可梦的能力变化都复原了！');
+        }
+        if (move.id === 'focusenergy') {
+          if ((user.volatile.critBoost || 0) >= 2) this.say('但是失败了！');
+          else { user.volatile.critBoost = 2; this.say(`${user.name} 鼓足了干劲（更容易击中要害）！`); }
+        }
+        if (move.id === 'splash') this.say('但是什么也没有发生！');
         if (move.id === 'courtchange') { const tmp = this.field.sides[0]; this.field.sides[0] = this.field.sides[1]; this.field.sides[1] = tmp; this.say('双方交换了场地效果！'); }
       }
       if ((eff.volatileStatus === 'protect' || eff.volatileStatus === 'maxguard') && target === user) {
@@ -1042,7 +1126,7 @@
     }
   }
 
-  const api = { setData, createPokemon, calcStats, effStat, estimateDamage, Battle, normId, STATUS_NAMES, abilityId, itemId, isGrounded, transformMove, makeZMove, makeMaxMove, stabMultiplier };
+  const api = { setData, specialDamageInfo, FIXED_DAMAGE_IDS, VARIABLE_POWER_IDS, createPokemon, calcStats, effStat, estimateDamage, Battle, normId, STATUS_NAMES, abilityId, itemId, isGrounded, transformMove, makeZMove, makeMaxMove, stabMultiplier };
   root.PKMBattle = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
