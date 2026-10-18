@@ -6,7 +6,25 @@
   let battle = null, moveCache = {}, selectedMechanic = null, animating = false;
   let menuView = 'home', commandMessage = '', encounterId = '', collectionLimit = 48, announcedBattle = null;
   let worldStorage = null; try { worldStorage = window.localStorage; } catch (_) {}
-  const worldStore = new PKMWorldSave.Store(worldStorage);
+  let worldStore = new PKMWorldSave.Store(worldStorage);
+  // v1.3.2: 外置桥接（SillyTavern 角色卡）嵌入模式：?embed=1
+  const EMBED = new URLSearchParams(location.search).has('embed');
+  if (EMBED) document.documentElement.classList.add('embed');
+  let dataReady = false, pendingHostConfig = null, hostTag = null, hostMode = false;
+  // 宿主模式：球袋来自角色卡变量（MVU），只存在本页内存里，不读写本机存档。
+  function memoryStorage() { const m = new Map(); return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: k => { m.delete(k); } }; }
+  function useHostStore(balls) {
+    const store = new PKMWorldSave.Store(memoryStorage());
+    const clean = {};
+    for (const id of Object.keys(PKMWorldSave.INITIAL_BALLS)) { const n = Number(balls?.[id]); clean[id] = Number.isInteger(n) && n >= 0 ? Math.min(n, 9999) : 0; }
+    store.write({ version: 1, balls: clean, box: [] });
+    worldStore = store; hostMode = true;
+  }
+  function postHost(type, payload) {
+    const msg = { type, payload, hostTag };
+    try { window.parent?.postMessage(msg, '*'); } catch (_) {}
+    try { if (window.top && window.top !== window.parent) window.top.postMessage(msg, '*'); } catch (_) {}
+  }
   let ZH = { species: {}, moves: {}, abilities: {}, natures: {}, types: {}, categories: {} };
   let SPRITES = {};
   let SPRITE_FEET = {};
@@ -807,7 +825,10 @@
     const mst = animating || ended ? null : mechanicState(battle.cur(0));
     const fightHint = mst?.state === 'armed' ? `已装备${mst.name}：选择招式后发动${mst.short}；再点道具可取消。` : mst?.state === 'ready' ? `点击血条框左侧的${mst.name}可${mst.short}；选中招式后才开始行动。` : '返回不消耗回合；选中招式后才开始行动。';
     $('command-status').textContent = commandMessage || (animating ? '请等待当前演出结束。' : view === 'home' ? '先选择行动，再决定招式、队友或精灵球。' : view === 'fight' ? fightHint : '');
-    if (ended) $('command-end-text').textContent = battle.outcome === 'captured'
+    if (ended && hostMode) $('command-end-text').textContent = battle.outcome === 'captured'
+      ? `收服了${displayPokemonName(battle.cur(1))}！结果已回传角色卡，点右上角「返回剧情」继续。`
+      : '对战结束，结果已回传角色卡。点右上角「返回剧情」继续。';
+    else if (ended) $('command-end-text').textContent = battle.outcome === 'captured'
       ? `${displayPokemonName(battle.cur(1))} 已收入仓库${worldStore.error ? '（当前仅临时保存，请导出）' : '并保存到本机'}。可在仓库选择位置加入下场编队。`
       : isWild ? '这次遭遇结束了。可以继续寻找新的野生宝可梦。' : '对战结束。也可以进入野生遭遇，收服新的伙伴。';
     for (const id of ['btn-start','btn-wild','btn-next-wild','btn-config','sel-enemy','sel-diff','btn-supply','btn-import-save','btn-box','btn-end-box']) $(id).disabled = animating;
@@ -1132,8 +1153,10 @@
     if (!battle || battle.winner === null || animating || announcedBattle === battle) return;
     announcedBattle = battle;
     const payload = battle.result();
-    try { window.parent?.postMessage({ type: 'PKM_BATTLE_RESULT', payload }, '*'); } catch (_) {}
-    try { window.top?.postMessage({ type: 'PKM_BATTLE_RESULT', payload }, '*'); } catch (_) {}
+    payload.hostTag = hostTag;
+    payload.playerTeam.forEach((p, i) => { const src = battle.teams[0][i]; if (src) { p.level = src.level; p.hostSlot = src.hostSlot ?? null; p.name = src.name; } });
+    payload.enemyTeam.forEach((p, i) => { const src = battle.teams[1][i]; if (src) { p.level = src.level; p.name = src.name; p.shiny = !!src.shiny; p.gender = src.gender || null; } });
+    postHost('PKM_BATTLE_RESULT', payload);
   }
   function after() { render(); announceResult(); }
   function act(a) {
@@ -1186,15 +1209,78 @@
   function buildFromPreset(trainer) {
     return trainer.party.map(p => PKMBattle.createPokemon(p.species, p.level, p.moves, p));
   }
+  // v1.3.2: 角色卡写的是官方中文名（“大岩蛇”“岩石封锁”），这里统一换算成引擎 id。
+  const MOVE_ALIASES = { '紧束': 'bind', '綁緊': 'bind', '十万伏特': 'thunderbolt', '十萬伏特': 'thunderbolt', '电光一闪': 'quickattack', '泡沫': 'bubble', '超音波': 'supersonic', '吸血': 'leechlife', '飞叶快刀': 'razorleaf', '火焰放射': 'flamethrower', '喷射火焰': 'flamethrower', '水炮': 'hydropump', '冲浪': 'surf', '催眠术': 'hypnosis', '念力': 'confusion', '高速移动': 'agility', '影子球': 'shadowball', '舌舔': 'lick', '黑夜魔影': 'nightshade', '奇异之光': 'confuseray', '电磁波': 'thunderwave', '打雷': 'thunder', '藤鞭': 'vinewhip', '寄生种子': 'leechseed', '日光束': 'solarbeam', '阳光烈焰': 'solarbeam' };
+  let moveZhToId = null;
+  function resolveMoveId(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+    const n = normId(raw);
+    if (n && PKMBattle._moves?.[n]) return n;
+    if (!moveZhToId) {
+      moveZhToId = {};
+      for (const [id, name] of Object.entries(ZH.moves || {})) if (name && !moveZhToId[name]) moveZhToId[name] = id;
+    }
+    const plain = raw.replace(/[\s·・]/g, '');
+    for (const key of [raw, plain]) {
+      if (moveZhToId[key] && PKMBattle._moves?.[moveZhToId[key]]) return moveZhToId[key];
+      if (MOVE_ALIASES[key] && PKMBattle._moves?.[MOVE_ALIASES[key]]) return MOVE_ALIASES[key];
+    }
+    return '';
+  }
+  const STATUS_ALIASES = { par: 'par', brn: 'brn', psn: 'psn', tox: 'tox', slp: 'slp', frz: 'frz', '麻痹': 'par', '灼伤': 'brn', '烧伤': 'brn', '中毒': 'psn', '剧毒': 'tox', '睡眠': 'slp', '睡着': 'slp', '冰冻': 'frz' };
+  const GENDER_ALIASES = { M: 'M', F: 'F', m: 'M', f: 'F', '公': 'M', '雄': 'M', '♂': 'M', '男': 'M', '母': 'F', '雌': 'F', '♀': 'F', '女': 'F' };
   function buildFromConfigParty(party) {
-    // Party entries: "Species" | {name:Species, lv, moves:[...]} (Pink protocol mode B)
-    return party.map(entry => {
-      if (typeof entry === 'string') return PKMBattle.createPokemon(entry, 50, autoMoves(entry, 50));
-      const species = entry.name;
-      const level = entry.lv || entry.level || 50;
-      const moves = (entry.moves && entry.moves.length) ? entry.moves : autoMoves(species, level);
-      return PKMBattle.createPokemon(species, level, moves, entry);
-    });
+    // Party entries: "Species" | {name|species:Species, lv|level, moves:[...], hp, maxHp, status}
+    const out = [];
+    for (const entry of party) {
+      const spec = typeof entry === 'string' ? { name: entry } : (entry || {});
+      const rawSpecies = spec.species || spec.name;
+      const species = resolveSpeciesId(rawSpecies);
+      if (!PKMBattle._dex[species]) throw new Error(`对战系统里找不到宝可梦“${rawSpecies}”。请检查对战块里的 species 是否写成官方中文名。`);
+      const level = Math.max(1, Math.min(100, parseInt(spec.lv || spec.level || 50, 10) || 50));
+      let moves = (Array.isArray(spec.moves) ? spec.moves : []).filter(Boolean).map(resolveMoveId).filter(Boolean);
+      moves = [...new Set(moves)].slice(0, 4);
+      if (!moves.length) moves = hostMode ? levelUpMoves(species, level) : autoMoves(species, level);
+      const opts = { ...spec };
+      delete opts.species; delete opts.moves; delete opts.hp; delete opts.maxHp; delete opts.status;
+      if (opts.ability) { const dexAbilities = PKMBattle._dex[species].abilities || []; const want = String(opts.ability); const hit = dexAbilities.find(a => normId(a) === normId(want) || zhAbility(a, '') === want); opts.ability = hit || undefined; }
+      if (opts.nature) { const want = String(opts.nature); const hit = Object.entries(ZH.natures || {}).find(([id, zh]) => zh === want || id === normId(want)); opts.nature = hit ? hit[0] : ''; }
+      if (opts.gender) opts.gender = GENDER_ALIASES[opts.gender] || null;
+      if (opts.nickname === rawSpecies) delete opts.nickname;
+      const p = PKMBattle.createPokemon(species, level, moves, opts);
+      const maxHp = Number(spec.maxHp), hp = Number(spec.hp);
+      if (spec.hp !== null && spec.hp !== undefined && Number.isFinite(hp)) {
+        const ratio = Number.isFinite(maxHp) && maxHp > 0 ? hp / maxHp : hp / p.maxHp;
+        p.hp = Math.max(0, Math.min(p.maxHp, Math.round(ratio * p.maxHp)));
+        if (hp > 0 && p.hp === 0) p.hp = 1;
+        if (p.hp === 0) p.fainted = true;
+      }
+      const st = STATUS_ALIASES[String(spec.status || '').trim()];
+      if (st && !p.fainted) { p.status = st; if (st === 'slp') p.sleepTurns = 1 + Math.floor(Math.random() * 3); }
+      if (spec.hostSlot !== undefined) p.hostSlot = spec.hostSlot;
+      out.push(p);
+    }
+    return out;
+  }
+  // v1.3.2：宿主（角色卡）模式下没写招式的宝可梦，按“升级招式表”取等级以内最近学会的 4 招，
+  // 而不是对战向的最强配招（否则 Lv3 的野生波波会用出大爆炸）。
+  let LEVELUP = {};
+  function levelUpMoves(speciesId, level) {
+    const sid = normId(speciesId);
+    const lv = Math.max(1, level || 1);
+    let list = (LEVELUP[sid] || []).filter(([l, id]) => l <= lv && PKMBattle._moves?.[id]).map(([, id]) => id);
+    if (!list.length) {
+      list = PKMTeam.legalMoves(sid, lv).filter(m => m.learn?.level && m.learn.level <= lv)
+        .sort((a, b) => a.learn.level - b.learn.level).map(m => m.id);
+    }
+    const uniq = [...new Set(list)];
+    const picked = uniq.slice(-4);
+    if (!picked.some(id => PKMBattle._moves[id]?.basePower > 0)) {
+      const dmg = uniq.filter(id => PKMBattle._moves[id]?.basePower > 0).pop() || (PKMBattle._moves.tackle ? 'tackle' : null);
+      if (dmg) { if (picked.length >= 4) picked.shift(); picked.push(dmg); }
+    }
+    return picked.length ? picked : autoMoves(sid, lv);
   }
   function autoMoves(speciesId, level) {
     return PKMTeam.chooseAutoMoves(speciesId, level || 50);
@@ -1202,6 +1288,7 @@
 
   function startBattle(cfg) {
     if (animating) return;
+    if (cfg && cfg.host) { hostTag = cfg.host.tag || null; useHostStore(cfg.host.balls); }
     menuView = 'home'; commandMessage = ''; announcedBattle = null;
     encounterId = globalThis.crypto?.randomUUID?.() || `encounter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     selectedMechanic = null;
@@ -1229,11 +1316,14 @@
       };
       playerTeam = resolveSide(cfg.p1, 'player');
       enemyTeam = resolveSide(cfg.p2, $('sel-enemy').value);
+      if (!playerTeam.length || playerTeam.every(p => p.fainted)) throw new Error('我方没有能战斗的宝可梦。');
+      if (!enemyTeam.length) throw new Error('对手没有宝可梦。');
       if (cfg.environment?.weather) weather = cfg.environment.weather === 'clear' ? null : cfg.environment.weather;
       if (cfg.environment?.weatherTurns) var wt = cfg.environment.weatherTurns;
       if (cfg.encounter?.type === 'wild' && enemyTeam.length !== 1) throw new Error('当前野生遭遇仅支持一只野生宝可梦。');
       battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, weather, weatherTurns: typeof wt !== 'undefined' ? wt : 0,
         encounterType: cfg.encounter?.type, balls: worldStore.state.balls, seed: cfg.seed });
+      if (cfg.ui?.openBalls && battle.encounterType === 'wild') menuView = 'balls';
     } else {
       playerTeam = $('chk-custom-player').checked ? buildValidated(readEditor('player'), '我方') : buildFromPreset(PKMPresets.TRAINERS.player);
       if (!playerTeam) return;
@@ -1438,6 +1528,7 @@
       fetch('./src/data/learnsets.json?v=0.9.0').then(r => r.json()),
       fetch('./src/data/zh-names.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('./src/data/sprite-map.json?v=0.9.5').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/levelup.json?v=1.3.2').then(r => r.ok ? r.json() : {}).then(x => { LEVELUP = x || {}; }).catch(() => {}),
     ]);
     ZH = zh || {};
     SPRITES = spriteMap?.entries || {};
@@ -1477,14 +1568,29 @@
     // URL config: ?config=<encodeURIComponent(JSON)>
     for (const id of ['p-sprite', 'e-sprite']) spriteResizeObserver?.observe($(id));
     const q = new URLSearchParams(location.search).get('config');
+    dataReady = true;
+    if (pendingHostConfig) { const cfg = pendingHostConfig; pendingHostConfig = null; startHostBattle(cfg); return; }
     if (q) { try { startBattle(JSON.parse(q)); return; } catch (_) {} }
+    if (EMBED) { $('log').textContent = '对战系统已就绪，正在等待角色卡发送对战配置……'; postHost('PKM_BATTLE_READY', { version: '1.3.2' }); return; }
     startBattle(null);
   }
 
-  // SillyTavern host -> simulator
+  function startHostBattle(cfg) {
+    try { startBattle(cfg); postHost('PKM_BATTLE_STARTED', { ok: true }); }
+    catch (e) {
+      console.warn('[PKM] bad config', e);
+      if (cfg?.host?.tag) hostTag = cfg.host.tag;
+      $('log').textContent = '对战配置有误：' + e.message;
+      postHost('PKM_BATTLE_ERROR', { message: String(e.message || e) });
+    }
+  }
+  // SillyTavern host -> simulator（数据未加载完时先排队，加载完再开战）
   window.addEventListener('message', ev => {
     const d = ev.data || {};
-    if (d.type === 'PKM_BATTLE_CONFIG' && d.payload) { try { startBattle(d.payload); } catch (e) { console.warn('[PKM] bad config', e); } }
+    if (d.type === 'PKM_BATTLE_CONFIG' && d.payload) {
+      if (!dataReady) { pendingHostConfig = d.payload; return; }
+      startHostBattle(d.payload);
+    } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: '1.3.2' });
   });
 
   init().catch(e => { $('log').textContent = '数据加载失败：' + e.message + '\n（请通过网页服务打开本页，不要直接双击文件）'; });

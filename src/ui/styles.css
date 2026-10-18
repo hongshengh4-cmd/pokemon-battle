@@ -804,3 +804,13 @@ textarea { width: 100%; min-height: 118px; padding: 13px 15px; resize: vertical;
   .ball-list { gap: 6px; }
   .capture-hint { font-size: 9px; line-height: 1.45; margin-bottom: 5px; }
 }
+
+/* v1.3.2 · 角色卡外置桥接嵌入模式（index.html?embed=1）：只保留战场、记录和指令台 */
+html.embed .top,
+html.embed #collection-section,
+html.embed .editor-section,
+html.embed .advanced-section,
+html.embed .footer-note,
+html.embed #btn-next-wild,
+html.embed #btn-end-box { display: none !important; }
+html.embed main.panel { padding-top: 10px; }
