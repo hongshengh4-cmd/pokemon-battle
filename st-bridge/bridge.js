@@ -1,12 +1,14 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.5
+// 宝可梦·关都之旅 · 外置桥接 v1.3.6
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.5');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.6');
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
 //       战斗结果写回 MVU 变量、生成前注入“剧情节点 + 变量摘要”、在场人物同步“已结识”。
-import * as K from './kanto-data.js?v=1.3.5';
+// v1.3.6 新增：① 精灵球可拖到屏幕任意位置（位置记在本机，面板/气泡跟着换边）；
+//       ② 叫声可换成自己的动画配音：放在 st-bridge/audio/cries/<id>.mp3，缺哪只自动退回原作叫声（见该目录 README）。
+import * as K from './kanto-data.js?v=1.3.6';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -28,6 +30,7 @@ function destroy() {
   if (destroyed) return; destroyed = true;
   for (const fn of cleanups.splice(0)) { try { fn(); } catch (_) {} }
   try { ctx()?.setExtensionPrompt?.(PROMPT_KEY, '', 1, 1); } catch (_) {}
+  try { stopCry(); } catch (_) {}
   for (const id of ['pkm-kanto-style', 'pkm-kanto-ball', 'pkm-kanto-panel', 'pkm-kanto-modal', 'pkm-kanto-toast']) PD.getElementById(id)?.remove();
   if (P.PKMKanto && P.PKMKanto.__owner === instance) delete P.PKMKanto;
 }
@@ -201,11 +204,58 @@ function cryLines(name) {
 }
 const cryText = s => cryLines(s?.species || s?.name).slice(0, 2).map(x => `「${x}」`).join('');
 function cryId(name) { const id = speciesId(name); return id ? id.replace(/-/g, '') : ''; }
+// v1.3.6：叫声可换成自己的动画配音。
+//   自定义文件：<CRY_BASE><id>.mp3（id 与原作叫声同名：pikachu、mrmime、nidoranf……；备选版本 <id>_2.mp3、<id>_3.mp3 需配 manifest.json）
+//   来源三档（精灵球面板里切换）：auto 动画配音优先、缺的用原作叫声 ／ custom 只播动画配音（缺的不出声）／ game 只播原作叫声
+//   想把音频放在本机而不进公开仓库：浏览器控制台执行 localStorage.setItem('pkmKantoCryBase','/pkm-cries/')，文件放进酒馆的 public/pkm-cries/
+const lsGet = (k, d = null) => { try { const v = P.localStorage?.getItem(k); return v == null ? d : v; } catch (_) { return d; } };
+const lsSet = (k, v) => { try { if (v == null) P.localStorage?.removeItem(k); else P.localStorage?.setItem(k, String(v)); } catch (_) {} };
+const CRY_BASE = String(lsGet('pkmKantoCryBase') || W.PKM_CRY_BASE || P.PKM_CRY_BASE || (BASE + 'st-bridge/audio/cries/')).replace(/\/?$/, '/');
+const CRY_MODES = ['auto', 'custom', 'game'];
+const cryMode = () => { const m = lsGet('pkmKantoCrySrc', 'auto'); return CRY_MODES.includes(m) ? m : 'auto'; };
+const cryVol = () => { const v = Number(lsGet('pkmKantoCryVol', 70)); return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 70; };
+const cryMiss = new Set();  // 本次会话里已确认“没有自定义文件”的物种，不再重复探测
+const cryEls = new Map();   // url -> Audio（重复点击不用重新下载）
+const cryLast = {};         // id -> 上一次播的是第几个版本（避免连续两次同一个）
+let cryTakes = {};          // manifest.json 里的 takes：{ pikachu: 3 } 表示有 pikachu.mp3、pikachu_2.mp3、pikachu_3.mp3
+fetch(CRY_BASE + 'manifest.json?v=' + VERSION).then(r => (r.ok ? r.json() : null)).then(j => { if (j?.takes && typeof j.takes === 'object') cryTakes = j.takes; }).catch(() => {});
+function cryUrl(id) {
+  const n = Math.max(1, Math.min(9, Math.floor(Number(cryTakes[id])) || 1));
+  let k = 1 + Math.floor(Math.random() * n);
+  if (n > 1 && k === cryLast[id]) k = k % n + 1;
+  cryLast[id] = k;
+  return `${CRY_BASE}${id}${k > 1 ? '_' + k : ''}.mp3`;
+}
 let lastCry = null;
+function stopCry() { try { lastCry?.pause?.(); } catch (_) {} lastCry = null; }
+function playGameCry(id, vol) {
+  try { const a = new P.Audio(`https://play.pokemonshowdown.com/audio/cries/${id}.mp3`); a.volume = Math.min(1, vol / 100 * 0.78); lastCry = a; a.play().catch(() => {}); } catch (_) {}
+}
+function playCustomCry(id, vol, onMiss) {
+  const url = cryUrl(id);
+  let a = cryEls.get(url);
+  if (!a) { a = new P.Audio(); a.preload = 'auto'; a.addEventListener('error', () => a._pkFail?.()); a.src = url; cryEls.set(url, a); }
+  a.volume = Math.max(0, Math.min(1, vol / 100));
+  try { a.currentTime = 0; } catch (_) {}
+  let failed = false;
+  a._pkFail = () => {
+    if (failed) return; failed = true; cryEls.delete(url);
+    const primary = url === `${CRY_BASE}${id}.mp3`;
+    if (primary) cryMiss.add(id); else cryTakes[id] = 1;            // 文件不存在：记住，下次直接走备用方案
+    if (lastCry !== a) return;                                        // 已经被新的叫声顶替了
+    if (primary) onMiss?.(); else playCustomCry(id, vol, onMiss);    // 备选版本缺失 → 退回第一个版本
+  };
+  lastCry = a;
+  a.play().catch(err => { if (err && err.name === 'NotSupportedError') a._pkFail?.(); });
+}
 function playCry(s) {
   const id = cryId(s?.species || s?.name); if (!id) return;
-  try { if (P.localStorage?.getItem('pkmKantoMute') === '1') return; } catch (_) {}
-  try { lastCry?.pause?.(); const a = new P.Audio(`https://play.pokemonshowdown.com/audio/cries/${id}.mp3`); a.volume = 0.55; lastCry = a; a.play().catch(() => {}); } catch (_) {}
+  if (lsGet('pkmKantoMute') === '1') return;
+  const mode = cryMode(), vol = cryVol(); if (!vol) return;
+  stopCry();
+  if (mode === 'game') { playGameCry(id, vol); return; }
+  if (cryMiss.has(id)) { if (mode === 'auto') playGameCry(id, vol); return; }
+  playCustomCry(id, vol, () => { if (mode === 'auto') playGameCry(id, vol); });
 }
 function cryBubble(s) {
   const host = PD.getElementById('pkm-kanto-ball'); if (!host) return;
@@ -214,6 +264,8 @@ function cryBubble(s) {
   const b = PD.createElement('div'); b.className = 'cry'; b.textContent = lines[Math.floor(Math.random() * lines.length)] || '……';
   host.appendChild(b); setTimeout(() => b.remove(), 2600);
 }
+// 控制台试听：__PKM_KANTO__.testCry('皮卡丘')（返回它对应的自定义叫声文件地址）
+instance.testCry = (name = '皮卡丘') => { const s = { species: name, name }; playCry(s); cryBubble(s); const id = cryId(name); return id ? `${CRY_BASE}${id}.mp3` : '中文名表还没加载完，稍后再试'; };
 
 /* ---------- 状态栏 <pkm_state> 与时间 ---------- */
 function parseState(text) {
@@ -781,6 +833,21 @@ const HOST_CSS = BASE_CSS + `
 #pkm-kanto-ball .cry{position:absolute;right:58px;bottom:70px;pointer-events:none;background:#fff;color:#1d2433;border:2.5px solid #22201c;border-radius:14px;padding:5px 11px;font:700 13px/1.4 system-ui,"PingFang SC","Microsoft YaHei",sans-serif;white-space:nowrap;box-shadow:0 4px 10px rgba(0,0,0,.25);animation:pkb-cry 2.6s ease forwards}
 #pkm-kanto-ball .cry:after{content:"";position:absolute;right:18px;bottom:-9px;border:8px solid transparent;border-top-color:#22201c;border-bottom:0}
 @keyframes pkb-cry{0%{opacity:0;transform:translateY(6px) scale(.9)}10%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}
+#pkm-kanto-ball .orb,#pkm-kanto-ball .follower{cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+#pkm-kanto-ball.dragging .orb,#pkm-kanto-ball.dragging .follower{cursor:grabbing}
+#pkm-kanto-ball.dragging .orb{transform:scale(1.1);transition:none;box-shadow:0 8px 20px rgba(0,0,0,.4)}
+#pkm-kanto-ball.dragging .follower{animation:none;transform:translateY(-4px) scale(1.04)}
+#pkm-kanto-ball .cry{width:max-content;max-width:min(240px,calc(100vw - 96px));white-space:normal}
+#pkm-kanto-ball.pos-l .cry{right:auto;left:58px}
+#pkm-kanto-ball.pos-l .cry:after{right:auto;left:18px}
+#pkm-kanto-ball.pos-t .cry{bottom:auto;top:70px}
+#pkm-kanto-ball.pos-t .cry:after{bottom:auto;top:-9px;border-top:0;border-bottom:8px solid #22201c}
+#pkm-kanto-panel .hd button.pos{margin-left:auto;padding:3px 8px}
+#pkm-kanto-panel .hd button.pos+button.mute{margin-left:4px}
+#pkm-kanto-panel .pk-snd{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin-top:8px;font-size:11.5px;color:#6b7385}
+#pkm-kanto-panel .pk-snd input[type=range]{flex:1;min-width:90px;accent-color:#dc0a2d}
+#pkm-kanto-panel .pk-snd select{font-size:11.5px;max-width:100%}
+#pkm-kanto-panel .pk-note{font-size:11.5px;color:#6b7385;margin-top:6px}
 #pkm-kanto-panel .mon small.mv{display:flex;flex-wrap:wrap;gap:3px 8px;color:#2a3350}#pkm-kanto-panel .mon small.mv i{font-style:normal;color:#8a93a6;font-size:10.5px}#pkm-kanto-panel .mon small.mv .low i{color:#dc0a2d;font-weight:700}
 #pkm-kanto-panel .stx{margin-top:4px;font-size:11.5px}#pkm-kanto-panel .stx summary{cursor:pointer;color:#2f6fe0;font-weight:650}
 #pkm-kanto-panel .stx .sg{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin:5px 0}
@@ -1325,12 +1392,106 @@ function onDexClick(m, e) {
 /* ======================================================================
  * 9. 右下角精灵球：队伍 / 电脑 / 跟随
  * ==================================================================== */
+/* ---------- 精灵球自由拖拽（v1.3.6） ----------
+ * 按住精灵球（或跟随的宝可梦）拖到屏幕任意位置；位置按“离最近两条边的距离”记在本机 localStorage，
+ * 窗口缩放 / 旋转后自动收回屏内；面板和叫声气泡会跟着球所在的象限换边。点一下（没拖动）仍然是打开 / 关闭面板。 */
+const BALL_POS_KEY = 'pkmKantoBallPos', BALL_MARGIN = 6;
+let ballDrag = null;
+const vp = () => { const d = PD.documentElement; return { w: d.clientWidth || P.innerWidth, h: d.clientHeight || P.innerHeight }; };
+function readBallPos() {
+  try {
+    const j = JSON.parse(lsGet(BALL_POS_KEY) || 'null');
+    if (j && (j.ax === 'l' || j.ax === 'r') && (j.ay === 't' || j.ay === 'b') && Number.isFinite(j.dx) && Number.isFinite(j.dy)) return j;
+  } catch (_) {}
+  return null;
+}
+const saveBallPos = pos => lsSet(BALL_POS_KEY, pos ? JSON.stringify(pos) : null);
+function setBallAnchor(el, p) {
+  if (!p) { for (const k of ['left', 'right', 'top', 'bottom']) el.style[k] = ''; el.classList.remove('pos-l', 'pos-t'); return; }
+  el.style.left = p.ax === 'l' ? p.dx + 'px' : 'auto'; el.style.right = p.ax === 'r' ? p.dx + 'px' : 'auto';
+  el.style.top = p.ay === 't' ? p.dy + 'px' : 'auto'; el.style.bottom = p.ay === 'b' ? p.dy + 'px' : 'auto';
+  el.classList.toggle('pos-l', p.ax === 'l'); el.classList.toggle('pos-t', p.ay === 't');
+}
+function ballPosFromRect(r) {
+  const { w, h } = vp(), m = BALL_MARGIN, clamp = (v, lo, hi) => Math.max(lo, Math.min(Math.max(lo, hi), v));
+  const ax = r.left + r.width / 2 < w / 2 ? 'l' : 'r', ay = r.top + r.height / 2 < h / 2 ? 't' : 'b';
+  return {
+    ax, ay,
+    dx: Math.round(clamp(ax === 'l' ? r.left : w - r.right, m, w - r.width - m)),
+    dy: Math.round(clamp(ay === 't' ? r.top : h - r.bottom, m, h - r.height - m)),
+  };
+}
+// 套用保存的位置，并保证整个球（含跟随的宝可梦）都在屏幕内；收回屏内只是临时的，不会覆盖保存的位置
+function placeBall(el) {
+  if (!el?.isConnected) return;
+  setBallAnchor(el, readBallPos());
+  const r = el.getBoundingClientRect(); if (!r.width) return;
+  const { w, h } = vp(), m = BALL_MARGIN;
+  if (r.left < m - 0.5 || r.top < m - 0.5 || r.right > w - m + 0.5 || r.bottom > h - m + 0.5) setBallAnchor(el, ballPosFromRect(r));
+  placePanel();
+}
+// 面板贴着球展开：球在左半边就左对齐、右半边就右对齐；上下选空间大的一侧
+function placePanel() {
+  const panel = PD.getElementById('pkm-kanto-panel'), ball = PD.getElementById('pkm-kanto-ball'); if (!panel || !ball) return;
+  const r = ball.getBoundingClientRect(); if (!r.width) return;
+  const { w, h } = vp(), gap = 8, edge = 12, pw = Math.min(380, w - 28);
+  let left = r.left + r.width / 2 < w / 2 ? r.left : r.right - pw;
+  left = Math.max(14, Math.min(w - pw - 14, left));
+  const above = r.top - gap - edge, below = h - r.bottom - gap - edge, down = below > above;
+  panel.style.left = left + 'px'; panel.style.right = 'auto';
+  panel.style.maxHeight = Math.min(620, h * 0.7, Math.max(160, down ? below : above)) + 'px';
+  if (down) { panel.style.top = Math.round(r.bottom + gap) + 'px'; panel.style.bottom = 'auto'; }
+  else { panel.style.bottom = Math.round(h - r.top + gap) + 'px'; panel.style.top = 'auto'; }
+}
+function installBallDrag(el) {
+  let suppressUntil = 0;
+  el.addEventListener('click', e => { if (performance.now() < suppressUntil) { e.stopImmediatePropagation(); e.preventDefault(); } }, true); // 拖完松手不算“点击”
+  el.addEventListener('dragstart', e => e.preventDefault());
+  el.addEventListener('load', () => placeBall(el), true);   // 跟随的宝可梦图片加载完、尺寸变了以后再收回屏内
+  el.addEventListener('pointerdown', e => {
+    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0) || !e.target.closest?.('.orb, .follower')) return;
+    const r = el.getBoundingClientRect();
+    ballDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x0: r.left, y0: r.top, w: r.width, h: r.height, moved: false };
+  });
+  const move = e => {
+    const d = ballDrag; if (!d || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (!d.moved) {
+      if (Math.hypot(dx, dy) < (e.pointerType === 'touch' ? 9 : 6)) return;   // 手指 / 鼠标抖一下不算拖动
+      d.moved = true; el.classList.add('dragging');
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}                  // 拖到聊天里的 iframe 上方也不会丢
+    }
+    e.preventDefault();
+    const { w, h } = vp(), m = BALL_MARGIN;
+    el.style.left = Math.max(m, Math.min(w - d.w - m, d.x0 + dx)) + 'px'; el.style.top = Math.max(m, Math.min(h - d.h - m, d.y0 + dy)) + 'px';
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+    placePanel();
+  };
+  const end = e => {
+    const d = ballDrag; if (!d || (e && e.pointerId !== d.id)) return;
+    ballDrag = null;
+    try { el.releasePointerCapture(d.id); } catch (_) {}
+    el.classList.remove('dragging');
+    if (!d.moved) return;
+    suppressUntil = performance.now() + 150;
+    const pos = ballPosFromRect(el.getBoundingClientRect());
+    saveBallPos(pos); setBallAnchor(el, pos); placePanel();
+    if (d.rerender) renderBall();
+  };
+  listen(PD, 'pointermove', move, { passive: false });
+  listen(PD, 'pointerup', end);
+  listen(PD, 'pointercancel', end);
+  listen(el, 'lostpointercapture', e => { if (e.target === el && ballDrag?.moved) end(); });   // 触屏会先把隐式捕获从球转给 el（球上也会冒泡出 lostpointercapture），只有 el 自己丢了捕获才算结束
+  listen(P, 'resize', () => placeBall(PD.getElementById('pkm-kanto-ball')));
+}
 let panelTab = 'party';
 function renderBall() {
+  if (ballDrag?.moved) { ballDrag.rerender = true; return; }   // 正在拖动时先不重画，松手后补画
   ensureHostStyle();
   let el = PD.getElementById('pkm-kanto-ball');
   if (!el) {
     el = PD.createElement('div'); el.id = 'pkm-kanto-ball'; el.className = 'pkb'; PD.body.appendChild(el);
+    installBallDrag(el);
     el.addEventListener('click', e => {
       if (e.target.closest('.orb')) { togglePanel(); return; }
       if (e.target.closest('.follower')) { // v1.3.4：点跟随的宝可梦 → 叫一声（真实叫声 + 气泡）
@@ -1343,7 +1504,8 @@ function renderBall() {
   const n = pkm.party.slots.filter(hasMon).length;
   const f = [...pkm.party.slots, ...pkm.party.box].find(s => hasMon(s) && s.uid && s.uid === pkm.party.follow);
   const fUrl = f ? spriteUrl(f.species || f.name, { anim: true, shiny: f.shiny }) : '';
-  el.innerHTML = `${fUrl ? `<img class="follower" src="${esc(fUrl)}" title="${esc(monName(f))}正跟在你身边（点一下听它叫）" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<button class="orb" title="队伍与仓库（关都之旅）"><span class="count">${n}</span></button>`;
+  el.innerHTML = `${fUrl ? `<img class="follower" draggable="false" src="${esc(fUrl)}" title="${esc(monName(f))}正跟在你身边（点一下听它叫）" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<button class="orb" title="队伍与仓库（关都之旅）"><span class="count">${n}</span></button>`;
+  placeBall(el);
   if (PD.getElementById('pkm-kanto-panel')) renderPanel();
 }
 // v1.3.4：能力值（含性格修正）、个体值、羁绊
@@ -1360,6 +1522,7 @@ function renderPanel() {
   if (!el) {
     el = PD.createElement('div'); el.id = 'pkm-kanto-panel'; el.className = 'pkb'; PD.body.appendChild(el);
     el.addEventListener('click', onPanelClick);
+    el.addEventListener('input', onPanelInput); el.addEventListener('change', onPanelChange);
   }
   const pkm = readPkm();
   const party = pkm.party.slots.map((s, i) => ({ s, i })).filter(x => hasMon(x.s));
@@ -1368,17 +1531,32 @@ function renderPanel() {
     ${where === 'party' ? `${s.isLead ? '' : `<button data-op="lead" data-i="${i}">设为首发</button>`}<button data-op="follow" data-i="${i}" data-w="party">${s.uid && s.uid === pkm.party.follow ? '收回球里' : '出球跟随'}</button>${count > 1 ? `<button data-op="tobox" data-i="${i}">存进电脑</button>` : ''}`
     : `<button data-op="toparty" data-i="${i}" ${count >= 6 ? 'disabled title="队伍已满 6 只"' : ''}>加入队伍</button><button data-op="follow" data-i="${i}" data-w="box">${s.uid && s.uid === pkm.party.follow ? '收回' : '跟随'}</button>`}</div></div>`; };
   let muted = false; try { muted = P.localStorage?.getItem('pkmKantoMute') === '1'; } catch (_) {}
-  el.innerHTML = `<div class="hd">🔴 我的宝可梦<button data-op="mute" class="mute" title="跟随宝可梦的叫声">${muted ? '🔇' : '🔊'}</button><button data-op="close">✕</button></div>
+  const csrc = cryMode(), cvol = cryVol();
+  el.innerHTML = `<div class="hd">🔴 我的宝可梦<button data-op="resetpos" class="pos" title="把精灵球放回右下角">📍</button><button data-op="mute" class="mute" title="跟随宝可梦的叫声">${muted ? '🔇' : '🔊'}</button><button data-op="close">✕</button></div>
     <div class="tabs"><button class="${panelTab === 'party' ? 'on' : ''}" data-tab="party">队伍 ${count}/6</button><button class="${panelTab === 'box' ? 'on' : ''}" data-tab="box">电脑 ${pkm.party.box.length}</button></div>
     <div class="bd">${panelTab === 'party' ? (party.length ? party.map(x => row(x.s, 'party', x.i)).join('') : '<div class="empty">还没有宝可梦。先在开局界面领取初始伙伴。</div>')
       : (pkm.party.box.length ? pkm.party.box.map((s, i) => row(s, 'box', i)).join('') : '<div class="empty">电脑里没有寄存的宝可梦。队伍满 6 只后收服的会传送到这里。</div>')}
-    <div class="pk-note">换首发、跟随、存取电脑会直接写入变量（下一条回复生效）。剧情里的治疗、升级、进化由 AI 按规则写入。</div></div>`;
+    <div class="pk-snd"><span>叫声</span><input type="range" min="0" max="100" step="5" value="${cvol}" data-op="vol" title="叫声音量"><select data-op="src" title="叫声来源（动画配音文件放在 st-bridge/audio/cries/）"><option value="auto"${csrc === 'auto' ? ' selected' : ''}>动画配音优先</option><option value="custom"${csrc === 'custom' ? ' selected' : ''}>仅动画配音</option><option value="game"${csrc === 'game' ? ' selected' : ''}>仅原作叫声</option></select></div>
+    <div class="pk-note">换首发、跟随、存取电脑会直接写入变量（下一条回复生效）。剧情里的治疗、升级、进化由 AI 按规则写入。球可以拖到屏幕任意位置，📍 放回右下角。</div></div>`;
+  placePanel();
+}
+// 叫声音量 / 来源：拖动滑块实时记下，松手或切换来源后用跟随（或首发）的宝可梦试听一声
+function onPanelInput(e) { if (e.target?.dataset?.op === 'vol') lsSet('pkmKantoCryVol', e.target.value); }
+function onPanelChange(e) {
+  const t = e.target, op = t?.dataset?.op;
+  if (op === 'vol') lsSet('pkmKantoCryVol', t.value);
+  else if (op === 'src') lsSet('pkmKantoCrySrc', CRY_MODES.includes(t.value) ? t.value : 'auto');
+  else return;
+  const p = readPkm(), mons = [...p.party.slots, ...p.party.box].filter(hasMon);
+  const s = mons.find(x => x.uid && x.uid === p.party.follow) || mons.find(x => x.isLead) || mons[0];
+  if (s) { playCry(s); cryBubble(s); }
 }
 async function onPanelClick(e) {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.tab) { panelTab = b.dataset.tab; renderPanel(); return; }
   const op = b.dataset.op, i = Number(b.dataset.i);
   if (op === 'close') { PD.getElementById('pkm-kanto-panel')?.remove(); return; }
+  if (op === 'resetpos') { saveBallPos(null); placeBall(PD.getElementById('pkm-kanto-ball')); return; }
   if (op === 'mute') { try { const m = P.localStorage.getItem('pkmKantoMute') === '1'; P.localStorage.setItem('pkmKantoMute', m ? '0' : '1'); } catch (_) {} renderPanel(); return; }
   try {
     await writePkm(pkm => {

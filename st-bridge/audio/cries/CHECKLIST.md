@@ -1,0 +1,161 @@
+# 关都 151 只叫声文件对照表
+
+文件放在 `st-bridge/audio/cries/`，文件名**必须**和下表「文件名」一列完全一致（小写、`.mp3`）。
+带 ★ 的是卡里的遭遇表 / 初始伙伴会出现的宝可梦，建议先录这些。表格版（Excel / WPS 可开，当进度表用）：`cries-checklist.csv`。
+
+| 编号 | 中文名 | 英文名 | 文件名 | 常出现 |
+| --- | --- | --- | --- | --- |
+| 001 | 妙蛙种子 | Bulbasaur | bulbasaur.mp3 | ★ |
+| 002 | 妙蛙草 | Ivysaur | ivysaur.mp3 |  |
+| 003 | 妙蛙花 | Venusaur | venusaur.mp3 |  |
+| 004 | 小火龙 | Charmander | charmander.mp3 | ★ |
+| 005 | 火恐龙 | Charmeleon | charmeleon.mp3 |  |
+| 006 | 喷火龙 | Charizard | charizard.mp3 |  |
+| 007 | 杰尼龟 | Squirtle | squirtle.mp3 | ★ |
+| 008 | 卡咪龟 | Wartortle | wartortle.mp3 |  |
+| 009 | 水箭龟 | Blastoise | blastoise.mp3 |  |
+| 010 | 绿毛虫 | Caterpie | caterpie.mp3 | ★ |
+| 011 | 铁甲蛹 | Metapod | metapod.mp3 | ★ |
+| 012 | 巴大蝶 | Butterfree | butterfree.mp3 |  |
+| 013 | 独角虫 | Weedle | weedle.mp3 | ★ |
+| 014 | 铁壳蛹 | Kakuna | kakuna.mp3 | ★ |
+| 015 | 大针蜂 | Beedrill | beedrill.mp3 |  |
+| 016 | 波波 | Pidgey | pidgey.mp3 | ★ |
+| 017 | 比比鸟 | Pidgeotto | pidgeotto.mp3 |  |
+| 018 | 大比鸟 | Pidgeot | pidgeot.mp3 |  |
+| 019 | 小拉达 | Rattata | rattata.mp3 | ★ |
+| 020 | 拉达 | Raticate | raticate.mp3 |  |
+| 021 | 烈雀 | Spearow | spearow.mp3 | ★ |
+| 022 | 大嘴雀 | Fearow | fearow.mp3 |  |
+| 023 | 阿柏蛇 | Ekans | ekans.mp3 | ★ |
+| 024 | 阿柏怪 | Arbok | arbok.mp3 | ★ |
+| 025 | 皮卡丘 | Pikachu | pikachu.mp3 | ★ |
+| 026 | 雷丘 | Raichu | raichu.mp3 |  |
+| 027 | 穿山鼠 | Sandshrew | sandshrew.mp3 | ★ |
+| 028 | 穿山王 | Sandslash | sandslash.mp3 |  |
+| 029 | 尼多兰 | Nidoran-F | nidoranf.mp3 | ★ |
+| 030 | 尼多娜 | Nidorina | nidorina.mp3 | ★ |
+| 031 | 尼多后 | Nidoqueen | nidoqueen.mp3 |  |
+| 032 | 尼多朗 | Nidoran-M | nidoranm.mp3 | ★ |
+| 033 | 尼多力诺 | Nidorino | nidorino.mp3 | ★ |
+| 034 | 尼多王 | Nidoking | nidoking.mp3 |  |
+| 035 | 皮皮 | Clefairy | clefairy.mp3 | ★ |
+| 036 | 皮可西 | Clefable | clefable.mp3 |  |
+| 037 | 六尾 | Vulpix | vulpix.mp3 | ★ |
+| 038 | 九尾 | Ninetales | ninetales.mp3 |  |
+| 039 | 胖丁 | Jigglypuff | jigglypuff.mp3 | ★ |
+| 040 | 胖可丁 | Wigglytuff | wigglytuff.mp3 |  |
+| 041 | 超音蝠 | Zubat | zubat.mp3 | ★ |
+| 042 | 大嘴蝠 | Golbat | golbat.mp3 | ★ |
+| 043 | 走路草 | Oddish | oddish.mp3 | ★ |
+| 044 | 臭臭花 | Gloom | gloom.mp3 |  |
+| 045 | 霸王花 | Vileplume | vileplume.mp3 |  |
+| 046 | 派拉斯 | Paras | paras.mp3 | ★ |
+| 047 | 派拉斯特 | Parasect | parasect.mp3 |  |
+| 048 | 毛球 | Venonat | venonat.mp3 | ★ |
+| 049 | 摩鲁蛾 | Venomoth | venomoth.mp3 |  |
+| 050 | 地鼠 | Diglett | diglett.mp3 | ★ |
+| 051 | 三地鼠 | Dugtrio | dugtrio.mp3 |  |
+| 052 | 喵喵 | Meowth | meowth.mp3 | ★ |
+| 053 | 猫老大 | Persian | persian.mp3 |  |
+| 054 | 可达鸭 | Psyduck | psyduck.mp3 | ★ |
+| 055 | 哥达鸭 | Golduck | golduck.mp3 |  |
+| 056 | 猴怪 | Mankey | mankey.mp3 |  |
+| 057 | 火暴猴 | Primeape | primeape.mp3 |  |
+| 058 | 卡蒂狗 | Growlithe | growlithe.mp3 | ★ |
+| 059 | 风速狗 | Arcanine | arcanine.mp3 |  |
+| 060 | 蚊香蝌蚪 | Poliwag | poliwag.mp3 | ★ |
+| 061 | 蚊香君 | Poliwhirl | poliwhirl.mp3 |  |
+| 062 | 蚊香泳士 | Poliwrath | poliwrath.mp3 |  |
+| 063 | 凯西 | Abra | abra.mp3 | ★ |
+| 064 | 勇基拉 | Kadabra | kadabra.mp3 |  |
+| 065 | 胡地 | Alakazam | alakazam.mp3 |  |
+| 066 | 腕力 | Machop | machop.mp3 |  |
+| 067 | 豪力 | Machoke | machoke.mp3 | ★ |
+| 068 | 怪力 | Machamp | machamp.mp3 |  |
+| 069 | 喇叭芽 | Bellsprout | bellsprout.mp3 | ★ |
+| 070 | 口呆花 | Weepinbell | weepinbell.mp3 |  |
+| 071 | 大食花 | Victreebel | victreebel.mp3 |  |
+| 072 | 玛瑙水母 | Tentacool | tentacool.mp3 |  |
+| 073 | 毒刺水母 | Tentacruel | tentacruel.mp3 | ★ |
+| 074 | 小拳石 | Geodude | geodude.mp3 | ★ |
+| 075 | 隆隆石 | Graveler | graveler.mp3 |  |
+| 076 | 隆隆岩 | Golem | golem.mp3 |  |
+| 077 | 小火马 | Ponyta | ponyta.mp3 | ★ |
+| 078 | 烈焰马 | Rapidash | rapidash.mp3 |  |
+| 079 | 呆呆兽 | Slowpoke | slowpoke.mp3 | ★ |
+| 080 | 呆壳兽 | Slowbro | slowbro.mp3 |  |
+| 081 | 小磁怪 | Magnemite | magnemite.mp3 | ★ |
+| 082 | 三合一磁怪 | Magneton | magneton.mp3 |  |
+| 083 | 大葱鸭 | Farfetch’d | farfetchd.mp3 |  |
+| 084 | 嘟嘟 | Doduo | doduo.mp3 |  |
+| 085 | 嘟嘟利 | Dodrio | dodrio.mp3 |  |
+| 086 | 小海狮 | Seel | seel.mp3 | ★ |
+| 087 | 白海狮 | Dewgong | dewgong.mp3 |  |
+| 088 | 臭泥 | Grimer | grimer.mp3 | ★ |
+| 089 | 臭臭泥 | Muk | muk.mp3 |  |
+| 090 | 大舌贝 | Shellder | shellder.mp3 | ★ |
+| 091 | 刺甲贝 | Cloyster | cloyster.mp3 |  |
+| 092 | 鬼斯 | Gastly | gastly.mp3 | ★ |
+| 093 | 鬼斯通 | Haunter | haunter.mp3 |  |
+| 094 | 耿鬼 | Gengar | gengar.mp3 |  |
+| 095 | 大岩蛇 | Onix | onix.mp3 | ★ |
+| 096 | 催眠貘 | Drowzee | drowzee.mp3 | ★ |
+| 097 | 引梦貘人 | Hypno | hypno.mp3 |  |
+| 098 | 大钳蟹 | Krabby | krabby.mp3 |  |
+| 099 | 巨钳蟹 | Kingler | kingler.mp3 |  |
+| 100 | 霹雳电球 | Voltorb | voltorb.mp3 |  |
+| 101 | 顽皮雷弹 | Electrode | electrode.mp3 |  |
+| 102 | 蛋蛋 | Exeggcute | exeggcute.mp3 | ★ |
+| 103 | 椰蛋树 | Exeggutor | exeggutor.mp3 |  |
+| 104 | 卡拉卡拉 | Cubone | cubone.mp3 | ★ |
+| 105 | 嘎啦嘎啦 | Marowak | marowak.mp3 |  |
+| 106 | 飞腿郎 | Hitmonlee | hitmonlee.mp3 |  |
+| 107 | 快拳郎 | Hitmonchan | hitmonchan.mp3 |  |
+| 108 | 大舌头 | Lickitung | lickitung.mp3 |  |
+| 109 | 瓦斯弹 | Koffing | koffing.mp3 |  |
+| 110 | 双弹瓦斯 | Weezing | weezing.mp3 |  |
+| 111 | 独角犀牛 | Rhyhorn | rhyhorn.mp3 |  |
+| 112 | 钻角犀兽 | Rhydon | rhydon.mp3 |  |
+| 113 | 吉利蛋 | Chansey | chansey.mp3 |  |
+| 114 | 蔓藤怪 | Tangela | tangela.mp3 |  |
+| 115 | 袋兽 | Kangaskhan | kangaskhan.mp3 | ★ |
+| 116 | 墨海马 | Horsea | horsea.mp3 | ★ |
+| 117 | 海刺龙 | Seadra | seadra.mp3 |  |
+| 118 | 角金鱼 | Goldeen | goldeen.mp3 | ★ |
+| 119 | 金鱼王 | Seaking | seaking.mp3 |  |
+| 120 | 海星星 | Staryu | staryu.mp3 | ★ |
+| 121 | 宝石海星 | Starmie | starmie.mp3 |  |
+| 122 | 魔墙人偶 | Mr. Mime | mrmime.mp3 |  |
+| 123 | 飞天螳螂 | Scyther | scyther.mp3 | ★ |
+| 124 | 迷唇姐 | Jynx | jynx.mp3 |  |
+| 125 | 电击兽 | Electabuzz | electabuzz.mp3 |  |
+| 126 | 鸭嘴火兽 | Magmar | magmar.mp3 | ★ |
+| 127 | 凯罗斯 | Pinsir | pinsir.mp3 | ★ |
+| 128 | 肯泰罗 | Tauros | tauros.mp3 | ★ |
+| 129 | 鲤鱼王 | Magikarp | magikarp.mp3 | ★ |
+| 130 | 暴鲤龙 | Gyarados | gyarados.mp3 |  |
+| 131 | 拉普拉斯 | Lapras | lapras.mp3 |  |
+| 132 | 百变怪 | Ditto | ditto.mp3 |  |
+| 133 | 伊布 | Eevee | eevee.mp3 | ★ |
+| 134 | 水伊布 | Vaporeon | vaporeon.mp3 |  |
+| 135 | 雷伊布 | Jolteon | jolteon.mp3 |  |
+| 136 | 火伊布 | Flareon | flareon.mp3 |  |
+| 137 | 多边兽 | Porygon | porygon.mp3 |  |
+| 138 | 菊石兽 | Omanyte | omanyte.mp3 |  |
+| 139 | 多刺菊石兽 | Omastar | omastar.mp3 |  |
+| 140 | 化石盔 | Kabuto | kabuto.mp3 |  |
+| 141 | 镰刀盔 | Kabutops | kabutops.mp3 |  |
+| 142 | 化石翼龙 | Aerodactyl | aerodactyl.mp3 |  |
+| 143 | 卡比兽 | Snorlax | snorlax.mp3 |  |
+| 144 | 急冻鸟 | Articuno | articuno.mp3 |  |
+| 145 | 闪电鸟 | Zapdos | zapdos.mp3 |  |
+| 146 | 火焰鸟 | Moltres | moltres.mp3 |  |
+| 147 | 迷你龙 | Dratini | dratini.mp3 |  |
+| 148 | 哈克龙 | Dragonair | dragonair.mp3 |  |
+| 149 | 快龙 | Dragonite | dragonite.mp3 |  |
+| 150 | 超梦 | Mewtwo | mewtwo.mp3 |  |
+| 151 | 梦幻 | Mew | mew.mp3 |  |
+
+关都以外的宝可梦同理：英文名小写、只留字母和数字（`Ho-Oh → hooh`、`Porygon2 → porygon2`、`Mime Jr. → mimejr`）。
+同一只的备选版本加 `_2`、`_3`（如 `pikachu_2.mp3`）。命名细节、工具用法见 [README.md](README.md)。
