@@ -1,4 +1,5 @@
 // v1.3.8：赛制（几 v 几）与配音偏好的单元测试——直接执行 st-bridge/bridge.js 里标记好的两段源码。
+// v1.3.9：和 NPC 对战默认两边全队（只数可以不一样）、约定赛一键改两边全队、华蓝道馆 3v3、对战画面的标签文字。
 //   @format-begin … @format-end      ：parseFormat / tableFormat / battleFormat / pickPlayers / engineConfig
 //   @voice-prefs-begin … @voice-prefs-end：全局 / 单只配音、录音缺失时的替代、语音合成台词与音高
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ let passed = 0; const test = (name, fn) => { fn(); passed++; console.log('✓', 
 
 /* ---------------- 赛制 ---------------- */
 const ctx = {
-  K: { STAT_KEYS: [], BALL_ZH: {}, DIFFICULTY_BY_TYPE: {}, WEATHER: {}, EVENT_FORMATS: K.EVENT_FORMATS, GYM_RULES: K.GYM_RULES },
+  K: { STAT_KEYS: [], BALL_ZH: {}, DIFFICULTY_BY_TYPE: {}, WEATHER: {}, EVENT_FORMATS: K.EVENT_FORMATS, GYM_RULES: K.GYM_RULES, BATTLE_LABEL: K.BATTLE_LABEL },
   playerEntries: p => p.mons, hash: () => 1, rng: () => () => 0.5, isObj: x => !!x && typeof x === 'object',
   rollIvs: () => ({}), natureZh: () => true, ivOk: () => true, rollNature: () => '勤奋',
 };
@@ -20,7 +21,7 @@ vm.createContext(ctx);
 vm.runInContext(slice('/* @format-begin', '/* @format-end */') + '\nObject.assign(globalThis, { parseFormat, battleFormat, pickPlayers, engineConfig });', ctx);
 const mons = n => ({ player: { bag: {} }, mons: Array.from({ length: n }, (_, i) => ({ hostSlot: i, species: 'mon' + i })) });
 const team = n => Array.from({ length: n }, () => ({ species: '皮卡丘', level: 10 }));
-const run = (cfg, own, pick) => ctx.engineConfig({ cfg, pick }, mons(own), 'tag');
+const run = (cfg, own, pick, full) => ctx.engineConfig({ cfg, pick, full }, mons(own), 'tag');
 const sizes = r => [r.engine.p1.entrants[0].party.length, r.engine.p2.entrants[0].party.length];
 
 test('v1.3.7 roster scenarios still hold (wild 6v1, short party, gym 3v3/6v6, inferred, 1v1)', () => {
@@ -58,15 +59,15 @@ test('gym rules table fills in a missing teamSize (event first, then the leader)
   assert.deepEqual(sizes(g({ id: 'EP032-阿桔', team: team(3) })), [2, 2], 'event id inside cfg.id');
   assert.deepEqual(sizes(g({ event: 'EP014', teamSize: 2, team: team(2) })), [2, 2], 'explicit teamSize beats the table');
   const t = run({ type: 'trainer', event: 'EP005', team: team(3) }, 6);
-  assert.deepEqual(sizes(t), [3, 3], 'gym table does not apply to other battles in the same episode');
-  assert.equal(t.fmt.source, 'team');
+  assert.deepEqual(sizes(t), [6, 3], 'gym table does not apply to other battles in the same episode (v1.3.9: NPC battle = both full teams)');
+  assert.equal(t.fmt.source, 'npc'); assert.equal(t.fmt.full, true);
   assert.deepEqual(sizes(run({ type: 'league', event: 'EP077', team: team(3) }, 6)), [3, 3]);
 });
 test('short-handed sides still battle; labels say so', () => {
   const r = run({ type: 'gym', teamSize: 3, team: team(3) }, 2);
   assert.deepEqual(sizes(r), [2, 3]);
   assert.equal(r.fmt.label, '3v3 · 我方只有2只，照常开战');
-  assert.equal(r.engine.rules.playerLimit, 3); assert.equal(r.engine.rules.enemyLimit, 3); assert.equal(r.engine.rules.tag, '3v3');
+  assert.equal(r.engine.rules.playerLimit, 3); assert.equal(r.engine.rules.enemyLimit, 3); assert.equal(r.engine.rules.tag, '3v3（我方2只）', 'v1.3.9: the in-battle tag notes the short side');
   const e = run({ type: 'gym', teamSize: 6, team: team(2) }, 6);
   assert.deepEqual(sizes(e), [6, 2]); assert.match(e.fmt.label, /对方只有2只/);
   assert.equal(run({ type: 'gym', teamSize: 2, team: team(2) }, 6).fmt.label, '2v2');
@@ -120,4 +121,52 @@ test('speech pitch follows body size (small = high), clamped', () => {
   assert.ok(Math.abs(p(7) - 1.45) < 1e-9); assert.equal(p(1000), 0.45); assert.equal(p(1), 2);
   const r = vctx.ttsTone(null); assert.ok(r.pitch > 0 && r.rate >= 0.75 && r.rate <= 1.3);
 });
-console.log(`Roster / voice tests: ${passed}/11 passed.`);
+/* ---------------- v1.3.9 ---------------- */
+test('NPC battle without an agreed format: both sides field full teams, counts may differ', () => {
+  for (const type of ['trainer', 'rival', 'rocket', 'boss', undefined]) {
+    const r = run({ type, opponent: '小智', team: team(2) }, 4);
+    assert.deepEqual(sizes(r), [4, 2], String(type));
+    assert.equal(r.fmt.full, true); assert.equal(r.fmt.name, '两边全队');
+    assert.equal(r.fmt.label, '两边全队 · 我方4只 vs 对方2只');
+    assert.equal(r.engine.rules.playerLimit, 6); assert.equal(r.engine.rules.enemyLimit, 6);
+  }
+  assert.deepEqual(sizes(run({ type: 'trainer', team: team(3) }, 1)), [1, 3], 'one vs three is fine');
+  assert.deepEqual(sizes(run({ type: 'trainer', team: team(8) }, 6)), [6, 6], 'still at most 6 a side');
+  const r = run({ type: 'trainer', opponent: '小智', team: team(2), rule: '一对一' }, 3);
+  assert.deepEqual(sizes(r), [3, 2], 'free-text rule is not parsed into a format');
+  assert.match(r.fmt.rule, /两边全队/);
+});
+test('agreed NvN with an NPC still applies; the picker override switches it to both full teams', () => {
+  const r = run({ type: 'trainer', teamSize: 1, team: team(3) }, 6);
+  assert.deepEqual(sizes(r), [1, 1]); assert.equal(r.fmt.npc, true); assert.equal(r.fmt.full, false);
+  assert.match(r.fmt.rule, /剧情里约定的/);
+  assert.deepEqual(sizes(run({ type: 'rival', format: '3v2', team: team(4) }, 6)), [3, 2], 'asymmetric agreement');
+  const o = run({ type: 'trainer', teamSize: 1, team: team(3) }, 6, null, true);
+  assert.deepEqual(sizes(o), [6, 3]); assert.equal(o.fmt.full, true); assert.equal(o.fmt.source, 'override');
+  const g = run({ type: 'gym', teamSize: 3, team: team(3) }, 6, null, true);
+  assert.deepEqual(sizes(g), [3, 3], 'gym rules cannot be overridden'); assert.equal(g.fmt.npc, false);
+});
+test('Cerulean gym (Misty / her sisters) is 3v3', () => {
+  for (const cfg of [{ event: 'EP007', opponent: '华蓝道馆馆主 小霞' }, { opponent: '小霞' }, { opponent: '华蓝道馆 樱花' }, { id: 'EP007-小霞' }]) {
+    const r = run({ type: 'gym', ...cfg, team: team(3) }, 6);
+    assert.deepEqual(sizes(r), [3, 3], JSON.stringify(cfg)); assert.equal(r.fmt.name, '3v3'); assert.equal(r.fmt.source, 'table');
+  }
+  assert.equal(K.EVENT_FORMATS.EP007.n, 3);
+});
+test('battle screen texts: type label, short opponent name, side label, first log line', () => {
+  const gym = run({ type: 'gym', event: 'EP007', opponent: '华蓝道馆馆主 小霞', team: team(3) }, 6).engine;
+  assert.equal(gym.rules.typeLabel, '道馆战'); assert.equal(gym.rules.opponent, '小霞'); assert.equal(gym.rules.sideLabel, '小霞');
+  assert.equal(gym.rules.tag, '小霞 · 3v3'); assert.match(gym.host.intro, /^【道馆战 · 3v3】小霞派出 3 只，我方参赛 3 只/);
+  assert.equal(run({ type: 'gym', teamSize: 3, opponent: '小霞', team: team(3) }, 2).engine.rules.tag, '小霞 · 3v3（我方2只）');
+  const npc = run({ type: 'trainer', opponent: '小智', team: team(2) }, 4).engine;
+  assert.equal(npc.rules.typeLabel, '训练家对战'); assert.equal(npc.rules.tag, '我方4只 vs 小智2只'); assert.equal(npc.rules.sideLabel, '小智');
+  assert.match(npc.host.intro, /两边全队/);
+  const wild = run({ type: 'wild', team: [{ species: '绿毛虫', level: 3 }] }, 3).engine;
+  assert.equal(wild.rules.typeLabel, '野生遭遇'); assert.equal(wild.rules.tag, '我方3只 vs 野生1只'); assert.equal(wild.rules.sideLabel, '野生');
+  assert.match(wild.host.intro, /野生的绿毛虫出现了/);
+  const anon = run({ type: 'rocket', opponent: '火箭队（武藏、小次郎、喵喵）', team: team(2) }, 2).engine;
+  assert.equal(anon.rules.typeLabel, '火箭队'); assert.equal(anon.rules.opponent, '火箭队'); assert.equal(anon.rules.tag, '我方2只 vs 火箭队2只');
+  const long = run({ type: 'trainer', opponent: '常青森林里遇到的捕虫少年训练家', teamSize: 2, team: team(2) }, 2).engine;
+  assert.equal(long.rules.opponent, ''); assert.equal(long.rules.sideLabel, '对手'); assert.equal(long.rules.tag, '2v2');
+});
+console.log(`Roster / voice tests: ${passed}/15 passed.`);

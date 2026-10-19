@@ -11,8 +11,9 @@
   const EMBED = new URLSearchParams(location.search).has('embed');
   if (EMBED) document.documentElement.classList.add('embed');
   let dataReady = false, pendingHostConfig = null, hostTag = null, hostMode = false;
-  const APP_VERSION = '1.3.8';
+  const APP_VERSION = '1.3.9';
   let formatTag = '', formatRule = ''; // v1.3.8：角色卡发来的赛制（例：3v3、3只 vs 1只），显示在行动菜单的标签上
+  let typeLabel = ''; // v1.3.9：角色卡发来的对战类型（道馆战 / 训练家对战 / 劲敌对战 / 火箭队……），标签第一段
   // 宿主模式：球袋来自角色卡变量（MVU），只存在本页内存里，不读写本机存档。
   function memoryStorage() { const m = new Map(); return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: k => { m.delete(k); } }; }
   function useHostStore(balls) {
@@ -817,7 +818,7 @@
     $('command-title').textContent = animating ? '行动进行中…' : ended ? (battle.outcome === 'captured' ? '收服成功！' : '本场战斗已结束')
       : battle.pendingSwitch !== null ? '请选择下一只出战宝可梦' : ({home: `${displayPokemonName(battle.cur(0))}，要做什么？`, fight: `${displayPokemonName(battle.cur(0))} · 选择招式`, switch: '选择出战宝可梦', balls: '选择精灵球'}[view]);
     const isWild = battle.encounterType === 'wild';
-    $('encounter-tag').textContent = `${isWild ? '野生遭遇' : '训练家对战'}${formatTag ? ' · ' + formatTag : ''} · 第 ${battle.turnCount + (ended ? 0 : 1)} 回合`;
+    $('encounter-tag').textContent = `${typeLabel || (isWild ? '野生遭遇' : '训练家对战')}${formatTag ? ' · ' + formatTag : ''} · 第 ${battle.turnCount + (ended ? 0 : 1)} 回合`;
     $('encounter-tag').title = formatRule || '';
     $('encounter-tag').classList.toggle('wild', isWild);
     $('command-back').hidden = view === 'home' || view === 'end' || battle.pendingSwitch !== null;
@@ -1395,7 +1396,8 @@
     selectedMechanic = null;
     animating = false;
     let playerTeam, enemyTeam, difficulty = $('sel-diff').value, weather = null;
-    formatTag = cfg ? String(cfg.rules?.tag || '').slice(0, 24) : ''; formatRule = cfg ? String(cfg.rules?.rule || '').slice(0, 120) : '';
+    formatTag = cfg ? String(cfg.rules?.tag || '').slice(0, 28) : ''; formatRule = cfg ? String(cfg.rules?.rule || '').slice(0, 160) : '';
+    typeLabel = cfg ? String(cfg.rules?.typeLabel || '').slice(0, 8) : '';
     if (cfg) {
       difficulty = cfg.difficulty || difficulty;
       if (cfg.encounter?.type === 'wild') $('sel-enemy').value = 'wild';
@@ -1431,6 +1433,8 @@
       battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, weather, weatherTurns: typeof wt !== 'undefined' ? wt : 0,
         encounterType: cfg.encounter?.type, balls: worldStore.state.balls, seed: cfg.seed });
       if (cfg.ui?.openBalls && battle.encounterType === 'wild') menuView = 'balls';
+      // v1.3.9：战斗记录第一行写明这场的类型和赛制（角色卡发来的）
+      if (cfg.host?.intro) battle.log.unshift(String(cfg.host.intro).slice(0, 200));
     } else {
       playerTeam = $('chk-custom-player').checked ? buildValidated(readEditor('player'), '我方') : buildFromPreset(PKMPresets.TRAINERS.player);
       if (!playerTeam) return;
@@ -1444,6 +1448,9 @@
       }
       battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, encounterType: isWild ? 'wild' : 'trainer', balls: worldStore.state.balls });
     }
+    // v1.3.9：敌方信息框的小标签：野生 / 对手名字（角色卡发来的），单机模式按野生 / 敌方
+    const sideEl = $('e-side-label');
+    if (sideEl) sideEl.textContent = String((cfg && cfg.rules?.sideLabel) || (battle.encounterType === 'wild' ? '野生' : '敌方')).slice(0, 6);
     after();
     requestAnimationFrame(() => { playSendOut(1); setTimeout(() => playSendOut(0), 150); });
   }

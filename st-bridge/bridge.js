@@ -1,8 +1,8 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.8
+// 宝可梦·关都之旅 · 外置桥接 v1.3.9
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.8');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.9');
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
 //       战斗结果写回 MVU 变量、生成前注入“剧情节点 + 变量摘要”、在场人物同步“已结识”。
@@ -10,8 +10,12 @@
 //       动漫配音有录音播录音，没有录音时用语音合成喊名字（按体型调音高），也可改成播游戏叫声或不出声。
 //       ② 赛制：野外 / 捕捉 = 对方 1 只 vs 我方能战斗的全部（最多 6 只，不足不补）；道馆按该馆规矩 NvN（缺 teamSize 时按道馆规矩表兜底），
 //       能战斗的多于 N 只时开战前点选参赛名单；不足 N 只照常开战，参赛的全倒立即判负；结果文本写明赛制、判定和未参赛名单。
+// v1.3.9：① 和 NPC 对战（训练家 / 劲敌 / 火箭队 / 强敌）没约定几对几时两边全队：对方派出带着的全部，我方能战斗的都能轮换，只数可以不一样；
+//       剧情里约定了 NvN 也能在选人界面一键改成两边全队。道馆照旧按规矩（华蓝道馆改为 3v3：小霞的初始三只）。
+//       ② 和小智 / 小霞 / 小刚对战时，对战块漏写的伙伴宝可梦按原作进度补上（例：小智收服绿毛虫后 = 皮卡丘 + 绿毛虫）。
+//       ③ 对战画面的信息改准：顶部标签写对战类型和双方实际只数，敌方信息框写对手名字，战斗记录第一行写明赛制。
 // v1.3.7：精灵球可拖到屏幕任意位置；叫声可换成自己的动画配音（st-bridge/audio/cries/<id>.mp3）。
-import * as K from './kanto-data.js?v=1.3.8';
+import * as K from './kanto-data.js?v=1.3.9';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -617,7 +621,7 @@ function summaryText(pkm) {
   // v1.3.8：能战斗的只数（对战名额按这个算，不要默认写成 6 只）
   if (party.length) {
     const ready = pkm.party.slots.filter(s => hasMon(s) && s.status !== '濒死' && s.hp !== 0);
-    lines.push(`能战斗：${ready.length} 只${ready.length ? '（' + ready.map(monName).join('、') + '）' : '，全部失去战斗能力，先去宝可梦中心'}。野外遭遇时这 ${ready.length} 只都能轮换上场（对方只有 1 只）；约定 NvN 时最多上 N 只，不足 N 只也照常开战，参赛的全倒就判负。`);
+    lines.push(`能战斗：${ready.length} 只${ready.length ? '（' + ready.map(monName).join('、') + '）' : '，全部失去战斗能力，先去宝可梦中心'}。野外遭遇时这 ${ready.length} 只都能轮换上场（对方只有 1 只）；和 NPC 对战没约定几对几时两边全队（对方带着的全部 vs 这 ${ready.length} 只，只数可以不一样）；道馆或约定 NvN 时最多上 N 只，不足 N 只也照常开战，参赛的全倒就判负。`);
   }
   if (pkm.party.box.length) lines.push(`电脑：${pkm.party.box.length} 只（${pkm.party.box.slice(-12).map(monName).join('、')}）`);
   const bag = Object.entries(pl.bag).filter(([, n]) => Number(n) > 0).map(([k, n]) => `${k}×${n}`);
@@ -655,6 +659,18 @@ function bondRules(pkm, st) {
     '【宝可梦叫声】宝可梦（会说话的喵喵除外）只会喊自己的名字或名字的音节，队伍里的叫法见上面的“叫声”。不要把名字截成不存在的叫法（例如小火龙不叫“小火小火”，应是“小火龙～！”“小～火龙！”）。',
     '【能力与 PP】宝可梦的个体值、性格、能力值和招式剩余 PP 由脚本维护；在宝可梦中心治疗后，把队伍每只的 hp、status、pp 都 replace 为 null（全部回满）。'].join('\n');
 }
+// v1.3.9：小智一行现在带着的宝可梦（按原作进度）。和他们对战时 team 要写全；没约定几对几就是两边全队
+function companionLine() {
+  const pos = storyPos(); if (!pos) return '';
+  const out = [];
+  for (const r of Object.values(K.NPC_ROSTERS || {})) {
+    if (r.skipMode && String(pos.mode || '').includes(r.skipMode)) continue; // 小智模式：{{user}} 就是小智
+    if (r.since && !pos.finished) { const i = pos.index(r.since); if (i < 0 || i > pos.cur) continue; }
+    const now = rosterNow(r, pos), soon = (r.members || []).filter(m => joiningNow(m.join, pos)).map(m => m.forms[0]);
+    if (now.length) out.push(`${r.name} ${now.length} 只（${now.map(m => m.species).join('、')}${soon.length ? `；这一段剧情里会加入${soon.join('、')}，加入后也算进去` : ''}）`);
+  }
+  return out.length ? `【伙伴阵容】小智一行现在随身带着（按原作进度，剧情里有变化以正文为准）：${out.join('；')}。和他们对战时 pkm_battle 的 team 写对方现在带着的全部；没约定几对几就是两边全队，只数可以和 {{user}} 不一样。` : '';
+}
 function buildInjection() {
   const c = chat(); if (!c.length) return '';
   const pkm = readPkm();
@@ -669,7 +685,7 @@ function buildInjection() {
     parts.push(`【开局】玩家刚在开局界面提交了训练家档案（见上一条 <pkm_profile>），初始伙伴已由脚本写入队伍，不要重复添加。请写第一幕：从“${mode}”的开场开始，下面的备选开场白只作场景与语气参考，要按档案（名字、性别、初始伙伴）改写，不要照抄：\n${subUser(String(g || '').replace(/<pkm_state>[\s\S]*?<\/pkm_state>/i, '').replace(/<\/?content>/g, '').trim()).slice(0, 1800)}`);
   }
   const pos = plotPosition();
-  if (pos?.finished) parts.push('主线：动画关都篇的事件已全部结束，自由剧情。');
+  if (pos?.finished) { parts.push('主线：动画关都篇的事件已全部结束，自由剧情。'); const cl = companionLine(); if (cl) parts.push(cl); }
   else if (pos) {
     const e = pos.event;
     parts.push(`当前主线事件：${e.id}｜${e.title}（${e.stage}${e.date ? '｜参考日期 ' + e.date.text : ''}）\n进度：节点 ${pos.node} / ${pos.total}。本轮只演这个节点里的一幕，停在需要 {{user}} 回应处；状态栏写“剧情：${e.id}｜节点${pos.node}｜进行中”，确实演完再写“节点完成”${pos.node === pos.total ? '，最后一个节点收束时写“完成”' : ''}。`);
@@ -680,6 +696,7 @@ function buildInjection() {
     if (e.battle) parts.push('对战机会（参考阵容，按 {{user}} 实力调整）：' + e.battle);
     const ef = K.EVENT_FORMATS?.[e.id];
     if (ef) parts.push(`本事件赛制：${ef.rule}（${ef.n}v${ef.n}）。发起这场${ef.type === 'gym' ? '道馆战' : '比赛'}时 pkm_battle 顶层写 "teamSize":${ef.n}，对手 team 不超过 ${ef.n} 只；开战前由裁判或对手在正文里说明规矩。`);
+    const cl = companionLine(); if (cl) parts.push(cl);
     const stageNo = (e.stage.match(/S\d+/) || [])[0];
     for (const s of events().stages[stageNo] || []) parts.push(s.content);
   }
@@ -1028,6 +1045,8 @@ const HOST_CSS = BASE_CSS + `
 #pkm-kanto-modal .pk-pick:disabled{opacity:.45}
 #pkm-kanto-modal .pk-pickfoot{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
 #pkm-kanto-modal .pk-pickfoot span{margin-right:auto;color:#4a5370;font-weight:700}
+#pkm-kanto-modal .pk-pickalt{margin-top:10px;padding:8px 10px;border-radius:10px;background:#fff6e0;color:#6b4b00;font-size:12.5px;line-height:1.8}
+#pkm-kanto-modal .pk-pickalt button{margin:0 4px;padding:3px 10px;font-size:12px}
 #pkm-kanto-modal .res{max-width:560px;margin:40px auto;background:#fff;border-radius:16px;padding:18px;white-space:pre-wrap}
 #pkm-kanto-toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:5000;background:#1d2433;color:#fff;padding:9px 16px;border-radius:12px;font:13px system-ui;transition:.25s;pointer-events:none}
 #pkm-kanto-toast.show{opacity:1;transform:translateX(-50%)}
@@ -1802,9 +1821,15 @@ function entryStatus(sess, extra = {}) {
   const open = !!modal && modal.key === sess.key;
   const summary = extra.summary || (ended ? `已结束：${rec?.summary || sess.summary || ''}` : open ? '对战进行中……' : sess.error ? '上次打开失败：' + sess.error : '对战系统已就绪，点击开始。');
   // v1.3.8：按当前队伍算好的赛制，入口卡片上显示（例：3v3 · 我方只有2只，照常开战）
-  let format = '', rule = '';
-  try { if (sess.cfg) { const f = battleFormat(sess.cfg, playerEntries(readPkm()).length); format = f.label; rule = f.rule || ''; } } catch (_) {}
-  try { postFromHost(sess.source, { channel: CH, type: 'status', key: sess.key, token: sess.token, summary, ended, open, error: sess.error || null, format, rule }); } catch (_) {}
+  // v1.3.9：和 NPC 对战默认两边全队；伙伴漏写的宝可梦按原作进度补上后，入口卡片的对手阵容也跟着更新
+  let format = '', rule = '', team = '', added = [];
+  try {
+    if (sess.cfg) {
+      const { comp, fmt: f } = battleCfg(sess.cfg, playerEntries(readPkm()).length); format = f.label; rule = f.rule || '';
+      if (comp.added.length) { added = comp.added; team = `${teamText(sess.cfg.team)} ＋ ${comp.added.join('、')}（${comp.who}现在带着的，按原作进度补上）`; }
+    }
+  } catch (e) { LOG('入口卡片赛制计算失败', e); }
+  try { postFromHost(sess.source, { channel: CH, type: 'status', key: sess.key, token: sess.token, summary, ended, open, error: sess.error || null, format, rule, team, added }); } catch (_) {}
 }
 function onHostMessage(e) {
   const d = e.data; if (!d || typeof d !== 'object') return;
@@ -1841,13 +1866,16 @@ function playerEntries(pkm) {
   });
 }
 /* @format-begin（tests/roster-voice.test.mjs 直接执行这一段）
- * v1.3.8 赛制（几 v 几）：
+ * 赛制（几 v 几）：
  *   野外 / 捕捉：对方只出 1 只；我方队伍里能战斗的都可以轮换上场——最多 6 只，没有 6 只就按实际只数（不补、不虚构）。
- *   道馆 / 训练家 / 劲敌 / 大会……：NvN。N 的来源依次是：对战块的 teamSize（或 format:"3v3"）> 道馆规矩表（按事件、再按馆主）> 对方阵容只数。
- *   双方都按“实际能上场的只数”开战（不足 N 只也照常开打）；参赛的全部失去战斗能力就立刻判负。
- *   我方能战斗的多于 N 只时，开战前在对战窗口里点选参赛的 N 只（点选顺序 = 出场顺序）。 */
+ *   和 NPC 对战（trainer / rival / rocket / boss，v1.3.9）：没约定几对几 = 两边全队——对方带着的全部 vs 我方能战斗的全部（各最多 6 只），
+ *     只数可以不一样，哪边能战斗的全部倒下哪边输。剧情里明确约定了（对战块写 teamSize 或 format）才按 NvN。
+ *   道馆 / 大会：NvN。N 的来源依次是：对战块的 teamSize（或 format:"3v3"）> 道馆规矩表（按事件、再按馆主）> 对方阵容只数。
+ *   NvN 时双方都按“实际能上场的只数”开战（不足 N 只也照常开打）；参赛的全部失去战斗能力就立刻判负。
+ *   NvN 且我方能战斗的多于 N 只时，开战前在对战窗口里点选参赛的 N 只（点选顺序 = 出场顺序）。 */
 const CN_NUM = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
 const fmtN = x => { const n = CN_NUM[x] || Number(x); return Number.isInteger(n) && n >= 1 && n <= 6 ? n : null; };
+const RULE_TYPES = ['gym', 'league']; // 按规矩 NvN 的对战；其余（trainer / rival / rocket / boss / 没写）都算和 NPC 对战
 // 3 / "3" / "3只" / "3v3" / "3对3" / "三对三" / "各3只" / "2v1" → { p: 我方上限, e: 对方上限 }
 function parseFormat(v) {
   if (v == null || v === '' || typeof v === 'boolean' || typeof v === 'object') return null;
@@ -1867,24 +1895,34 @@ function tableFormat(cfg, type) {
   if (type === 'gym') { const who = `${cfg?.opponent || ''} ${cfg?.title || ''} ${cfg?.id || ''}`; return (K.GYM_RULES || []).find(r => r.re.test(who)) || null; }
   return null;
 }
-function battleFormat(cfg, healthy) {
+// opts.full：玩家在选人界面点了“改成两边全队”（只对和 NPC 的对战有效）
+function battleFormat(cfg, healthy, opts = {}) {
   const type = String(cfg?.type || 'trainer').toLowerCase();
   const listed = Array.isArray(cfg?.team) ? cfg.team.length : 0;
   const have = Math.max(0, Math.floor(Number(healthy) || 0));
   if (type === 'wild') {
     const player = Math.min(6, have);
-    return { type, wild: true, name: '野外', playerMax: 6, enemyMax: 1, player, enemy: Math.min(1, listed), source: 'wild',
+    return { type, wild: true, npc: false, full: false, name: '野外', playerMax: 6, enemyMax: 1, player, enemy: Math.min(1, listed), source: 'wild',
       rule: '野外遭遇：对方只有 1 只，我方队伍里能战斗的都可以轮换上场（最多 6 只）',
       tag: `我方${player}只 vs 野生1只`, label: `野外 · 我方${player}只 vs 野生1只` };
   }
+  const npc = !RULE_TYPES.includes(type);
   let f = null, source = 'cfg', rule = String(cfg?.rule || cfg?.rules?.text || '').trim();
-  for (const v of [cfg?.teamSize, cfg?.rules?.teamSize, cfg?.format, cfg?.rules?.format]) { f = parseFormat(v); if (f) break; }
+  if (!(npc && opts.full)) for (const v of [cfg?.teamSize, cfg?.rules?.teamSize, cfg?.format, cfg?.rules?.format]) { f = parseFormat(v); if (f) break; }
+  if (!f && npc) {
+    // v1.3.9：和 NPC 对战，没约定几对几 → 两边全队（只数可以不一样）
+    const player = Math.min(6, have), enemy = Math.min(6, listed);
+    return { type, wild: false, npc: true, full: true, name: '两边全队', playerMax: 6, enemyMax: 6, player, enemy, source: opts.full ? 'override' : 'npc',
+      rule: '两边全队：对方派出现在带着的全部宝可梦，我方能战斗的都可以轮换上场（各最多 6 只）；只数可以不一样，哪边能战斗的全部倒下哪边输',
+      tag: `我方${player}只 vs 对方${enemy}只`, label: `两边全队 · 我方${player}只 vs 对方${enemy}只` };
+  }
   if (!f) { const t = tableFormat(cfg, type); if (t) { f = { p: t.n, e: t.n }; source = 'table'; if (!rule) rule = t.rule; } }
   if (!f) { const n = Math.max(1, Math.min(6, listed || 1)); f = { p: n, e: n }; source = 'team'; }
   const player = Math.min(f.p, have), enemy = Math.min(f.e, listed), name = `${f.p}v${f.e}`;
   const short = [player < f.p ? `我方只有${player}只` : '', enemy < f.e ? `对方只有${enemy}只` : ''].filter(Boolean).join('、');
-  if (!rule) rule = f.p === f.e ? `${name}：双方各最多 ${f.p} 只，单打轮换` : `${name}：我方最多 ${f.p} 只，对方最多 ${f.e} 只`;
-  return { type, wild: false, name, playerMax: f.p, enemyMax: f.e, player, enemy, source, rule,
+  if (!rule) rule = f.p === 1 && f.e === 1 ? '1v1：双方各出 1 只单挑' : f.p === f.e ? `${name}：双方各最多 ${f.p} 只，单打轮换` : `${name}：我方最多 ${f.p} 只，对方最多 ${f.e} 只`;
+  if (npc && source === 'cfg') rule += '（剧情里约定的）';
+  return { type, wild: false, npc, full: false, name, playerMax: f.p, enemyMax: f.e, player, enemy, source, rule,
     tag: name + (short ? `（${short}）` : ''), label: name + (short ? ` · ${short}，照常开战` : '') };
 }
 // 参赛名单：开战前点选过就按点选顺序；否则首发优先、按队伍顺序取到上限
@@ -1896,10 +1934,29 @@ function pickPlayers(entries, max, pick) {
   }
   return entries.slice(0, max);
 }
+// 对手的简称（对战画面的标签 / 信息框用）：“华蓝道馆馆主 小霞” → “小霞”；太长就不写名字
+function shortOpponent(cfg) {
+  const raw = String(cfg?.opponent || '').replace(/[（(][^）)]*[）)]/g, ' ').trim();
+  if (!raw) return '';
+  const last = raw.split(/[\s·・]+/).filter(Boolean).pop() || '';
+  return last.length <= 6 ? last : '';
+}
+// 对战画面里显示的文字：标签第一段 / 赛制段 / 敌方信息框的小标签 / 战斗记录第一行
+function battleTexts(cfg, fmt, pN, eN) {
+  const opp = shortOpponent(cfg), who = opp || '对方';
+  const typeLabel = K.BATTLE_LABEL?.[fmt.type] || (fmt.wild ? '野生遭遇' : '训练家对战');
+  const first = cfg?.team?.[0], firstName = typeof first === 'string' ? first : (first?.species || first?.name || '宝可梦');
+  if (fmt.wild) return { typeLabel, opp, sideLabel: '野生', tag: `我方${pN}只 vs 野生1只`, intro: `【${typeLabel}】野生的${firstName}出现了！我方能战斗的 ${pN} 只都可以轮换上场。` };
+  if (fmt.full) return { typeLabel, opp, sideLabel: opp || '对手', tag: `我方${pN}只 vs ${who}${eN}只`,
+    intro: `【${typeLabel} · 两边全队】${who}带着 ${eN} 只宝可梦，我方能战斗的 ${pN} 只都可以轮换上场；哪边全部倒下哪边输。` };
+  const short = [pN < fmt.playerMax ? `我方${pN}只` : '', eN < fmt.enemyMax ? `${who}${eN}只` : ''].filter(Boolean).join('、');
+  return { typeLabel, opp, sideLabel: opp || '对手', tag: `${opp ? opp + ' · ' : ''}${fmt.name}${short ? `（${short}）` : ''}`,
+    intro: `【${typeLabel} · ${fmt.name}】${who}派出 ${eN} 只，我方参赛 ${pN} 只；参赛的全部倒下就判负。` };
+}
 function engineConfig(spec, pkm, tag) {
   const cfg = spec.cfg || {};
   const entries = playerEntries(pkm);
-  const fmt = battleFormat(cfg, entries.length), type = fmt.type;
+  const fmt = battleFormat(cfg, entries.length, { full: !!spec.full }), type = fmt.type;
   const team = (Array.isArray(cfg.team) ? cfg.team : []).slice(0, fmt.enemyMax);
   // v1.3.4：对手 / 野生宝可梦也有个体值和性格（按这场对战的 key 固定，重开同一场不会变；收服后沿用）
   const band = ['gym', 'rival', 'boss', 'league'].includes(type) ? 'high' : null;
@@ -1911,37 +1968,142 @@ function engineConfig(spec, pkm, tag) {
     if (!natureZh(e.nature)) e.nature = rollNature(r);
     return e;
   });
+  const party = pickPlayers(entries, fmt.playerMax, spec.pick);
+  const tx = battleTexts(cfg, fmt, party.length, enemy.length);
   const balls = Object.fromEntries(Object.entries(K.BALL_ZH).map(([id, zh]) => [id, Math.max(0, Math.floor(Number(pkm.player.bag[zh]) || 0))]));
-  const out = { rules: { teamSize: Math.max(fmt.playerMax, fmt.enemyMax), playerLimit: fmt.playerMax, enemyLimit: fmt.enemyMax, tag: fmt.wild ? `${fmt.player}只 vs 1只` : fmt.name, label: fmt.label, rule: fmt.rule },
+  const out = { rules: { teamSize: Math.max(fmt.playerMax, fmt.enemyMax), playerLimit: fmt.playerMax, enemyLimit: fmt.enemyMax, tag: tx.tag, label: fmt.label, rule: fmt.rule,
+      typeLabel: tx.typeLabel, opponent: tx.opp, sideLabel: tx.sideLabel },
     encounter: { type: fmt.wild ? 'wild' : 'trainer' }, difficulty: cfg.difficulty || K.DIFFICULTY_BY_TYPE[type] || 'normal',
-    p1: { entrants: [{ name: 'host-player', party: pickPlayers(entries, fmt.playerMax, spec.pick) }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
-    host: { tag, balls }, ui: spec.ui || null };
+    p1: { entrants: [{ name: 'host-player', party }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
+    host: { tag, balls, intro: tx.intro }, ui: spec.ui || null };
   const w = K.WEATHER[String(cfg.environment || '').trim()];
   if (w) out.environment = { weather: w, weatherTurns: 0 };
   return { engine: out, balls, type, fmt };
 }
 /* @format-end */
+/* @roster-begin（tests/npc-roster.test.mjs 直接执行这一段）
+ * v1.3.9 伙伴阵容兜底：和小智 / 小霞 / 小刚对战时，对战块里漏写的成员按原作进度（K.NPC_ROSTERS）补上。
+ *   AI 写了的照写的来（顺序不变，第一只仍是首发），只把漏掉的接在后面；进化过的认作同一只，不会重复。
+ *   对战块写 "exact":true（剧情改变了伙伴阵容）时不补。 */
+// pos：{ index: 事件ID → 序号（没有返回 -1）, cur: 当前事件序号, node: 当前节点, finished, skipped: Set(被跳过的事件ID) }
+function pointPassed(point, pos) {
+  if (!point) return true;
+  const [ev, nd] = String(point).split('#');
+  if (pos.skipped?.has(ev)) return false;
+  if (pos.finished) return true;
+  const i = pos.index(ev); if (i < 0) return false;
+  return pos.cur > i || (nd != null && pos.cur === i && pos.node > Number(nd));
+}
+// 这一段剧情（当前节点；整集结束才生效的看最后一个节点）里会加入的成员：生成前注入提醒 AI，免得收服后还按旧名单写
+function joiningNow(point, pos) {
+  if (!point || pos.finished || pointPassed(point, pos)) return false;
+  const [ev, nd] = String(point).split('#'); const i = pos.index(ev);
+  if (i < 0 || i !== pos.cur || pos.skipped?.has(ev)) return false;
+  return nd != null ? pos.node === Number(nd) : pos.node === pos.total;
+}
+function rosterNow(r, pos) {
+  const out = [];
+  for (const m of r?.members || []) {
+    if (m.join && !pointPassed(m.join, pos)) continue;
+    if (m.leave && pointPassed(m.leave, pos)) continue;
+    let k = 0; for (const p of m.evolve || []) { if (m.forms[k + 1] && pointPassed(p, pos)) k++; else break; }
+    out.push({ species: m.forms[k], forms: m.forms, ace: !!m.ace });
+  }
+  return out;
+}
+const OPP_SPLIT = /[\s·・,，、\/&＆+＋]+|以及|与|和|跟|及/;
+function companionOf(cfg, rosters, mode) {
+  if (!cfg || String(cfg.type || '').toLowerCase() === 'wild') return null;
+  const raw = String(cfg.opponent || '').replace(/[（(][^）)]*[）)]/g, ' ').trim(); if (!raw) return null;
+  const tokens = raw.split(OPP_SPLIT).map(t => t.trim()).filter(Boolean);
+  const hits = Object.entries(rosters || {}).filter(([, r]) => {
+    const names = [r.name, ...(r.alias || [])].filter(Boolean);
+    return tokens.some(t => names.some(n => t === n || (t.endsWith(n) && t.length - n.length <= 8)));
+  }).map(([k]) => k);
+  if (hits.length !== 1) return null; // 没对上，或者一场里有两个伙伴（说不清是谁的队伍）
+  const r = rosters[hits[0]];
+  if (r.skipMode && String(mode || '').includes(r.skipMode)) return null; // 小智模式：{{user}} 就是小智
+  return hits[0];
+}
+// env：{ rosters, pos, mode, zh: 名字 → 官方中文名 }；返回 { team: 补全后的阵容, added: 补上的种类, who: 伙伴名 }
+function completeTeam(cfg, env) {
+  const team = Array.isArray(cfg?.team) ? cfg.team.slice() : [];
+  const res = { team, added: [], who: null };
+  if (!team.length || !env?.pos || !env.rosters) return res;
+  if (cfg.exact === true || /^(true|exact|实际|准确)$/i.test(String(cfg.exact ?? cfg.roster ?? ''))) return res;
+  const key = companionOf(cfg, env.rosters, env.mode); if (!key) return res;
+  res.who = env.rosters[key].name;
+  const zh = env.zh || (x => x);
+  const nameOf = t => zh(String(typeof t === 'string' ? t : (t?.species || t?.name || '')).trim());
+  const listed = team.map(nameOf), used = new Set(), missing = [];
+  for (const m of rosterNow(env.rosters[key], env.pos)) {
+    const k = listed.findIndex((sp, i) => !used.has(i) && m.forms.includes(sp));
+    if (k >= 0) used.add(k); else missing.push(m);
+  }
+  const lv = team.map(t => Number(t && typeof t === 'object' ? (t.level ?? t.lv) : NaN)).filter(n => Number.isFinite(n) && n > 0);
+  const ref = lv.length ? Math.max(...lv) : 5;
+  for (const m of missing) {
+    if (team.length >= 6) break;
+    team.push({ species: m.species, level: Math.max(2, Math.min(100, Math.round(ref) + (m.ace ? 2 : 0))), auto: true });
+    res.added.push(m.species);
+  }
+  return res;
+}
+/* @roster-end */
+// 当前剧情进度（伙伴阵容兜底用）：和生成前注入用的是同一套定位
+function storyPos() {
+  try {
+    const { list } = events(); if (!list.length) return null;
+    const pos = plotPosition(); if (!pos) return null;
+    const index = Object.fromEntries(list.map((e, i) => [e.id, i]));
+    const skipped = new Set();
+    for (const m of chat()) {
+      if (m?.is_user) continue;
+      const x = parseState(m?.mes)?.剧情?.match(/([A-Z]{2,3}\d{2,3})\s*[｜|]\s*节点\s*\d+\s*[｜|]\s*跳过/); if (x) skipped.add(x[1]);
+    }
+    const idx = id => (index[id] ?? -1);
+    return pos.finished ? { index: idx, cur: list.length, node: 1, total: 1, finished: true, skipped, mode: pos.mode }
+      : { index: idx, cur: index[pos.event.id], node: pos.node, total: pos.total, finished: false, skipped, mode: pos.mode };
+  } catch (e) { LOG('剧情进度读取失败', e); return null; }
+}
+const zhName = n => zhSpecies(speciesId(n)) || n;
+function npcCompletion(cfg) {
+  if (!cfg || String(cfg.type || '').toLowerCase() === 'wild') return { team: Array.isArray(cfg?.team) ? cfg.team : [], added: [], who: null };
+  const pos = storyPos();
+  return completeTeam(cfg, { rosters: K.NPC_ROSTERS, pos, mode: pos?.mode || latestState()?.state?.模式 || readPkm().world.mode, zh: zhName });
+}
+// 对战块 + 伙伴阵容兜底 → 实际开战用的配置和赛制。
+// comp.added 只算真正会上场的（约定 1v1 时补进来的排在后面，不上场就不提）；comp.all = 补上的全部（改成两边全队时用）
+function battleCfg(cfg, healthy, opts = {}) {
+  const c = npcCompletion(cfg);
+  const eff = c.added.length ? { ...cfg, team: c.team } : cfg;
+  const fmt = battleFormat(eff, healthy, opts);
+  const base = Array.isArray(cfg?.team) ? cfg.team.length : 0;
+  return { cfg: eff, fmt, comp: { who: c.who, all: c.added, added: c.added.slice(0, Math.max(0, fmt.enemyMax - base)) } };
+}
+const teamText = team => (team || []).map(p => (typeof p === 'string' ? p : `${p.species || p.name || '?'}${p.level || p.lv ? ' Lv' + (p.level || p.lv) : ''}`)).join(' / ');
 function openBattle(spec) {
   if (modal) { toast('已经有一场对战在进行中'); return; }
   const pkm = readPkm();
   const sess = spec.sess || null;
-  const cfg = spec.cfg;
-  if (!cfg || !Array.isArray(cfg.team) || !cfg.team.length) { toast('对战块里没有对手宝可梦（team）', 'warning'); if (sess) { sess.error = '对战块缺少 team'; entryStatus(sess); } return; }
+  if (!spec.cfg || !Array.isArray(spec.cfg.team) || !spec.cfg.team.length) { toast('对战块里没有对手宝可梦（team）', 'warning'); if (sess) { sess.error = '对战块缺少 team'; entryStatus(sess); } return; }
   const entries = playerEntries(pkm);
   if (!entries.length) {
     const msg = pkm.party.slots.some(hasMon) ? '队伍里的宝可梦都失去了战斗能力，先去宝可梦中心治疗吧。' : '你还没有宝可梦，不能对战。';
     toast(msg, 'warning'); if (sess) { sess.error = msg; entryStatus(sess); } return;
   }
-  const fmt = battleFormat(cfg, entries.length);
+  // v1.3.9：和小智 / 小霞 / 小刚对战时，对战块漏写的伙伴宝可梦按原作进度补上
+  const { cfg, comp, fmt } = battleCfg(spec.cfg, entries.length, { full: !!spec.full });
   ensureHostStyle();
   const el = PD.createElement('div'); el.id = 'pkm-kanto-modal'; el.className = 'pkb';
   const title = cfg.title || `${K.TYPE_LABEL[fmt.type] || '对战'}${cfg.opponent ? ' · ' + cfg.opponent : ''}`;
   el.innerHTML = `<div class="bar"><span class="t">⚔️ ${esc(title)}</span><span class="fmt" title="${esc(fmt.rule)}">${esc(fmt.label)}</span><span class="s"></span><button class="red" data-op="close">返回剧情</button></div><div class="stage"></div>`;
   PD.body.appendChild(el);
-  modal = { el, frame: null, tag: null, key: spec.key, spec, cfg, fmt, engine: null, balls: null, type: fmt.type, sent: false, done: false, sess, timer: null };
+  modal = { el, frame: null, tag: null, key: spec.key, spec, cfg, comp, fmt, engine: null, balls: null, type: fmt.type, sent: false, done: false, sess, timer: null };
   if (sess) { sess.status = 'open'; sess.error = null; entryStatus(sess); }
   el.querySelector('[data-op=close]').onclick = closeBattle;
-  if (!fmt.wild && entries.length > fmt.playerMax && !Array.isArray(spec.pick)) showPicker(modal, pkm, entries);
+  if (comp.added.length) toast(`${comp.who}现在带着 ${cfg.team.length} 只：对战块漏写的${comp.added.join('、')}已按原作进度补上`, 'info');
+  if (!fmt.wild && !fmt.full && entries.length > fmt.playerMax && !Array.isArray(spec.pick)) showPicker(modal, pkm, entries);
   else launchBattle(modal, spec.pick || null);
 }
 // 真正开战：建对战网页的 iframe 并发配置（选人之后才走到这里）
@@ -1949,10 +2111,10 @@ function launchBattle(m, pick) {
   if (modal !== m) return;
   const pkm = readPkm(); // 选人期间变量可能变了，按最新的算
   const tag = uid();
-  const { engine, balls, type, fmt } = engineConfig({ ...m.spec, pick }, pkm, tag);
+  const { engine, balls, type, fmt } = engineConfig({ ...m.spec, cfg: m.cfg, pick }, pkm, tag);
   if (!engine.p1.entrants[0].party.length) { toast('队伍里的宝可梦都失去了战斗能力，先去宝可梦中心治疗吧。', 'warning'); closeBattle(true); return; }
   Object.assign(m, { tag, engine, balls, type, fmt });
-  const f = m.el.querySelector('.bar .fmt'); if (f) { f.textContent = fmt.wild ? fmt.label : `${fmt.name} · 我方${engine.p1.entrants[0].party.length}只 vs 对方${engine.p2.entrants[0].party.length}只`; f.title = fmt.rule; }
+  const f = m.el.querySelector('.bar .fmt'); if (f) { const pN = engine.p1.entrants[0].party.length, eN = engine.p2.entrants[0].party.length; f.textContent = fmt.wild ? fmt.label : `${fmt.name} · 我方${pN}只 vs ${engine.rules.opponent || '对方'}${eN}只`; f.title = fmt.rule; }
   const stage = m.el.querySelector('.stage');
   const frame = PD.createElement('iframe');
   frame.setAttribute('allow', 'autoplay'); frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
@@ -1975,7 +2137,8 @@ function showPicker(m, pkm, entries) {
       const can = ok.has(i), k = sel.indexOf(i), h = curHp(s);
       return `<button type="button" class="pk-pick${k >= 0 ? ' on' : ''}" data-op="pick" data-i="${i}"${can ? '' : ' disabled'}>${k >= 0 ? `<em>${k + 1}</em>` : ''}${spriteImg(s.species || s.name, { shiny: s.shiny })}<b>${esc(monName(s))}</b><small>Lv${esc(s.lv ?? '?')} · ${can ? (h.max && !h.full ? `HP ${h.hp}/${h.max}` : 'HP 满') + (s.status ? '·' + esc(s.status) : '') : '濒死，不能参赛'}</small>${can ? hpBar(s) : ''}</button>`;
     }).join('');
-    stage.innerHTML = `<div class="pk-pickbox"><h3>选出参赛的 ${n} 只宝可梦</h3><p>${esc(m.fmt.rule)}。<br>参赛的 ${n} 只全部失去战斗能力就判负；没选上的这场不上场，体力也不变。点选顺序就是出场顺序（①号首发）。</p><div class="pk-pickgrid">${cards}</div><div class="pk-pickfoot"><span>已选 ${sel.length} / ${n}</span><button type="button" class="ghost" data-op="pick-auto">按队伍顺序</button><button type="button" class="red" data-op="pick-go"${sel.length === n ? '' : ' disabled'}>开始对战（${esc(m.fmt.name)}）</button></div></div>`;
+    const npcOpt = m.fmt.npc ? `<div class="pk-pickalt">这是剧情里约定的 ${esc(m.fmt.name)}。不想按约定打？<button type="button" class="ghost" data-op="pick-full">改成两边全队</button>（对方派出全部 ${m.cfg.team.length} 只，我方能战斗的都上）</div>` : '';
+    stage.innerHTML = `<div class="pk-pickbox"><h3>选出参赛的 ${n} 只宝可梦</h3><p>${esc(m.fmt.rule)}。<br>${n === 1 ? '参赛的这 1 只失去战斗能力就判负' : `参赛的 ${n} 只全部失去战斗能力就判负`}；没选上的这场不上场，体力也不变。点选顺序就是出场顺序（①号首发）。</p><div class="pk-pickgrid">${cards}</div>${npcOpt}<div class="pk-pickfoot"><span>已选 ${sel.length} / ${n}</span><button type="button" class="ghost" data-op="pick-auto">按队伍顺序</button><button type="button" class="red" data-op="pick-go"${sel.length === n ? '' : ' disabled'}>开始对战（${esc(m.fmt.name)}）</button></div></div>`;
   };
   stage.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b || b.disabled || modal !== m) return;
@@ -1986,6 +2149,12 @@ function showPicker(m, pkm, entries) {
       draw(); return;
     }
     if (op === 'pick-auto') { sel = entries.slice(0, n).map(e => e.hostSlot); draw(); return; }
+    if (op === 'pick-full' && m.fmt.npc) { // v1.3.9：和 NPC 的约定赛改成两边全队
+      m.spec.full = true; m.fmt = battleFormat(m.cfg, playerEntries(readPkm()).length, { full: true });
+      if (m.comp?.all?.length) { m.comp = { ...m.comp, added: m.comp.all }; toast(`${m.comp.who}派出现在带着的全部 ${m.cfg.team.length} 只（${m.comp.all.join('、')}按原作进度补上）`, 'info'); }
+      const f = m.el.querySelector('.bar .fmt'); if (f) { f.textContent = m.fmt.label; f.title = m.fmt.rule; }
+      stage.className = 'stage'; launchBattle(m, null); return;
+    }
     if (op === 'pick-go' && sel.length === n) {
       // 记 uid 再换回槽位：选人期间如果队伍顺序变了也不会选错
       const uids = sel.map(i => pkm.party.slots[i]?.uid || null), fresh = readPkm();
@@ -2033,11 +2202,13 @@ function monFromCapture(cap, enemy, cfgEnemy, pkm) {
   ensureIndividual(mon); // 资质按个体值推算；缺项补齐
   return mon;
 }
-// v1.3.8：胜负判定说明（参赛的全部失去战斗能力 = 判负）
+// v1.3.8：胜负判定说明（参赛的全部失去战斗能力 = 判负）；v1.3.9：两边全队
 function verdictText(outcome, fmt, pTeam, eTeam) {
   const pn = pTeam.length, en = eTeam.length;
-  if (outcome === 'defeat') return `我方参赛的${pn}只全部失去战斗能力，判负${!fmt?.wild && fmt?.playerMax > pn ? `（不足 ${fmt.playerMax} 只照常开战，${pn} 只全倒即输）` : ''}`;
-  if (outcome === 'victory') return fmt?.wild ? `野生的${zhSpecies(eTeam[0]?.baseSpecies || eTeam[0]?.species) || '宝可梦'}失去战斗能力，获胜` : `对方参赛的${en}只全部失去战斗能力，获胜`;
+  if (outcome === 'defeat') return fmt?.wild || fmt?.full ? `我方能战斗的${pn}只全部失去战斗能力，判负`
+    : `我方参赛的${pn}只全部失去战斗能力，判负${fmt?.playerMax > pn ? `（不足 ${fmt.playerMax} 只照常开战，${pn} 只全倒即输）` : ''}`;
+  if (outcome === 'victory') return fmt?.wild ? `野生的${zhSpecies(eTeam[0]?.baseSpecies || eTeam[0]?.species) || '宝可梦'}失去战斗能力，获胜`
+    : fmt?.full ? `对方的${en}只全部失去战斗能力，获胜` : `对方参赛的${en}只全部失去战斗能力，获胜`;
   if (outcome === 'captured') return '收服成功，对战结束';
   return '对战中止，不计胜负';
 }
@@ -2045,7 +2216,8 @@ async function applyResult(m, payload) {
   const outcome = payload.outcome || (payload.winner === 'player' ? 'victory' : payload.winner === 'enemy' ? 'defeat' : 'draw');
   const cfg = m.cfg, cfgTeam = Array.isArray(cfg.team) ? cfg.team : [];
   const fmt = m.fmt || battleFormat(cfg, (payload.playerTeam || []).length);
-  const fmtText = fmt.wild ? `野外 · ${fmt.tag}` : fmt.name;
+  const pN = (payload.playerTeam || []).length, eN = (payload.enemyTeam || []).length;
+  const fmtText = fmt.wild ? `野外 · ${fmt.tag}` : fmt.full ? `两边全队（我方${pN}只 vs 对方${eN}只）` : fmt.name;
   let placed = null, capturedName = null;
   let summaryParts = [];
   const bondNotes = [];
@@ -2108,7 +2280,7 @@ async function applyResult(m, payload) {
   const verdict = verdictText(outcome, fmt, pTeam, eTeam);
   const res = {
     id: cfg.id || null, event: cfg.event || '自由', type: m.type, opponent: cfg.opponent || null, outcome, turns: payload.turns || 0,
-    format: fmt.wild ? '野外1只' : fmt.name, rule: fmt.rule, lineup: { player: pTeam.length, enemy: eTeam.length }, verdict, bench,
+    format: fmt.wild ? '野外1只' : fmt.name, rule: fmt.rule, lineup: { player: pTeam.length, enemy: eTeam.length }, verdict, bench, autoTeam: m.comp?.added?.length ? m.comp.added : undefined,
     player: (payload.playerTeam || []).map(p => { const s = pkm.party.slots[p.hostSlot]; return { name: s ? monName(s) : zhSpecies(p.baseSpecies), lv: p.level, hp: p.fainted ? 0 : p.hp, maxHp: p.maxHp, fainted: !!p.fainted, status: K.STATUS_TO_ZH[p.status] || null, entered: p.participated !== false }; }),
     enemy: (payload.enemyTeam || []).map(p => ({ species: zhSpecies(p.baseSpecies || p.species), lv: p.level, hp: p.hp, maxHp: p.maxHp, fainted: !!p.fainted, status: K.STATUS_TO_ZH[p.status] || null })),
     capture: outcome === 'captured' && payload.capture ? { ball: K.BALL_ZH[payload.capture.ball] || '精灵球', species: capturedName, level: payload.capture.spec?.level, placed } : null,
@@ -2116,11 +2288,12 @@ async function applyResult(m, payload) {
   };
   const used = Object.entries(K.BALL_ZH).map(([id, zh]) => { const n = (m.balls[id] || 0) - (Number(payload.ballStock?.[id]) || 0); return n > 0 ? `${zh}×${n}` : null; }).filter(Boolean);
   const line = cfg.lines?.[outcome === 'defeat' ? 'player_lose' : 'player_win'];
-  const human = [`【战斗结果】${OUTCOME_ZH[outcome] || '结束'}｜${fmt.wild ? `野外遭遇（${fmt.tag}）` : `${K.TYPE_LABEL[m.type] || '对战'} ${fmt.name}`}｜${res.opponent || (m.type === 'wild' ? '野生宝可梦' : '对手')}｜${res.turns} 回合`,
+  const human = [`【战斗结果】${OUTCOME_ZH[outcome] || '结束'}｜${fmt.wild ? `野外遭遇（${fmt.tag}）` : fmt.full ? `${K.BATTLE_LABEL?.[m.type] || '对战'}·两边全队（我方${res.player.length}只 vs 对方${res.enemy.length}只）` : `${K.TYPE_LABEL[m.type] || '对战'} ${fmt.name}`}｜${res.opponent || (m.type === 'wild' ? '野生宝可梦' : '对手')}｜${res.turns} 回合`,
     `判定：${verdict}。`,
-    `${fmt.wild ? `我方（可轮换${res.player.length}只）` : `我方参赛（${res.player.length}只）`}：${res.player.map(p => `${p.name} Lv${p.lv} ${p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}${p.status ? '·' + p.status : ''}`}${p.entered ? '' : '（没轮到出场）'}`).join('；')}`,
-    bench.length ? `未参赛（这场没上场，体力不变）：${bench.join('、')}` : '',
-    `对手${fmt.wild ? '' : `参赛（${res.enemy.length}只）`}：${res.enemy.map(p => `${p.species} Lv${p.lv} ${outcome === 'captured' && !p.fainted ? '被收服' : p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}`}`).join('；')}`,
+    `${fmt.wild ? `我方（可轮换${res.player.length}只）` : fmt.full ? `我方（能战斗的${res.player.length}只都可轮换）` : `我方参赛（${res.player.length}只）`}：${res.player.map(p => `${p.name} Lv${p.lv} ${p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}${p.status ? '·' + p.status : ''}`}${p.entered ? '' : '（没轮到出场）'}`).join('；')}`,
+    bench.length ? (fmt.wild || fmt.full ? `没能参战（开战前已失去战斗能力）：${bench.join('、')}` : `未参赛（这场没上场，体力不变）：${bench.join('、')}`) : '',
+    `对手${fmt.wild ? '' : fmt.full ? `（${res.enemy.length}只）` : `参赛（${res.enemy.length}只）`}：${res.enemy.map(p => `${p.species} Lv${p.lv} ${outcome === 'captured' && !p.fainted ? '被收服' : p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}`}`).join('；')}`,
+    m.comp?.added?.length ? `（${m.comp.who}的${m.comp.added.join('、')}是按原作进度补进对手阵容的，续写时当作${m.comp.who}本来就带着。）` : '',
     res.capture ? `收服：用${res.capture.ball}收服了 ${res.capture.species} Lv${res.capture.level}，已放进${placed}。` : '',
     used.length ? `消耗：${used.join('、')}` : '',
     bondNotes.length ? `羁绊（脚本已加）：${bondNotes.join('，')}` : '',

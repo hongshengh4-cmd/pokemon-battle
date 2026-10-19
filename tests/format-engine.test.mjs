@@ -1,4 +1,5 @@
 // v1.3.8：引擎层的即时判负——只把参赛名单交给引擎，参赛的全部倒下就判负（不足额也一样），野外 N 只 vs 1 只。
+// v1.3.9：和 NPC 两边全队、只数不一样（例：我方 4 只 vs 小智 2 只）。
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
@@ -34,4 +35,12 @@ test('wild: whole party (here 4) vs one wild Pokémon', () => {
   for (const p of b.teams[0]) faint(p); b.updateWinner();
   assert.equal(b.result().outcome, 'defeat', 'all four fainted → defeat');
 });
-console.log(`Format / engine tests: ${passed}/4 passed.`);
+test('NPC full teams with uneven counts: my 4 vs Ash\'s 2 — whichever side runs out first loses', () => {
+  const b = new E.Battle(mk(['bulbasaur', 'charmander', 'squirtle', 'pidgeotto']), mk(['pikachu', 'caterpie']), { difficulty: 'normal', encounterType: 'trainer' });
+  assert.equal(b.teams[0].length, 4); assert.equal(b.teams[1].length, 2);
+  faint(b.teams[1][0]); b.updateWinner(); assert.equal(b.winner, null, 'Caterpie is still standing');
+  faint(b.teams[1][1]); b.updateWinner(); assert.equal(b.result().outcome, 'victory');
+  const c = new E.Battle(mk(['pikachu']), mk(['staryu', 'starmie', 'goldeen']), { difficulty: 'normal', encounterType: 'trainer' });
+  faint(c.teams[0][0]); c.updateWinner(); assert.equal(c.result().outcome, 'defeat', 'my only one down vs Misty\'s three → defeat');
+});
+console.log(`Format / engine tests: ${passed}/5 passed.`);
