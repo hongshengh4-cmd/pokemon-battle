@@ -1,14 +1,17 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.7
+// 宝可梦·关都之旅 · 外置桥接 v1.3.8
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.7');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.8');
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
 //       战斗结果写回 MVU 变量、生成前注入“剧情节点 + 变量摘要”、在场人物同步“已结识”。
-// v1.3.7 新增：① 精灵球可拖到屏幕任意位置（位置记在本机，面板/气泡跟着换边）；
-//       ② 叫声可换成自己的动画配音：放在 st-bridge/audio/cries/<id>.mp3，缺哪只自动退回原作叫声（见该目录 README）。
-import * as K from './kanto-data.js?v=1.3.7';
+// v1.3.8 新增：① 配音二选一：精灵球面板里每只宝可梦都能选 🎬 动漫配音 / 🎮 游戏配音（全局默认 + 单只覆盖）；
+//       动漫配音有录音播录音，没有录音时用语音合成喊名字（按体型调音高），也可改成播游戏叫声或不出声。
+//       ② 赛制：野外 / 捕捉 = 对方 1 只 vs 我方能战斗的全部（最多 6 只，不足不补）；道馆按该馆规矩 NvN（缺 teamSize 时按道馆规矩表兜底），
+//       能战斗的多于 N 只时开战前点选参赛名单；不足 N 只照常开战，参赛的全倒立即判负；结果文本写明赛制、判定和未参赛名单。
+// v1.3.7：精灵球可拖到屏幕任意位置；叫声可换成自己的动画配音（st-bridge/audio/cries/<id>.mp3）。
+import * as K from './kanto-data.js?v=1.3.8';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -204,24 +207,78 @@ function cryLines(name) {
 }
 const cryText = s => cryLines(s?.species || s?.name).slice(0, 2).map(x => `「${x}」`).join('');
 function cryId(name) { const id = speciesId(name); return id ? id.replace(/-/g, '') : ''; }
-// v1.3.7：叫声可换成自己的动画配音。
-//   自定义文件：<CRY_BASE><id>.mp3（id 与原作叫声同名：pikachu、mrmime、nidoranf……；备选版本 <id>_2.mp3、<id>_3.mp3 需配 manifest.json）
-//   来源三档（精灵球面板里切换）：auto 动画配音优先、缺的用原作叫声 ／ custom 只播动画配音（缺的不出声）／ game 只播原作叫声
-//   想把音频放在本机而不进公开仓库：浏览器控制台执行 localStorage.setItem('pkmKantoCryBase','/pkm-cries/')，文件放进酒馆的 public/pkm-cries/
+// v1.3.8：配音二选一（精灵球面板里选）——🎬 动漫配音 / 🎮 游戏配音。全局一个默认，每只宝可梦还可以单独选（“默认”= 跟随全局）。
+//   🎮 游戏配音：原作游戏叫声（Pokémon Showdown 的音频）。
+//   🎬 动漫配音：① 有录音就播录音：<CRY_BASE><id>.mp3（id 与原作叫声同名：pikachu、mrmime、nidoranf……；备选版本 <id>_2.mp3… 需 manifest.json）；
+//               ② 这只还没有录音时按“没有动漫录音时”的设置：🗣️ 语音合成喊名字（浏览器自带朗读，按体型调音高；默认）／🎮 改播游戏叫声／🔇 不出声。
+//   设置都存在当前浏览器（localStorage）：pkmKantoCrySrc = anime|game，pkmKantoCryFallback = tts|game|mute，pkmKantoCryMon:<uid> = anime|game，
+//   pkmKantoCryBase = 动漫录音地址（默认本站 st-bridge/audio/cries/）。v1.3.7 的旧值 auto / custom 自动当作 anime。
+//   想把录音只放在本机、不进公开仓库：文件放进酒馆的 public/pkm-cries/，面板“动漫录音地址”填 /pkm-cries/。
 const lsGet = (k, d = null) => { try { const v = P.localStorage?.getItem(k); return v == null ? d : v; } catch (_) { return d; } };
 const lsSet = (k, v) => { try { if (v == null) P.localStorage?.removeItem(k); else P.localStorage?.setItem(k, String(v)); } catch (_) {} };
-const CRY_BASE = String(lsGet('pkmKantoCryBase') || W.PKM_CRY_BASE || P.PKM_CRY_BASE || (BASE + 'st-bridge/audio/cries/')).replace(/\/?$/, '/');
-const CRY_MODES = ['auto', 'custom', 'game'];
-const cryMode = () => { const m = lsGet('pkmKantoCrySrc', 'auto'); return CRY_MODES.includes(m) ? m : 'auto'; };
-const monCryKey = s => s?.uid ? 'pkmKantoCryMon:' + s.uid : null;
-const monCryMode = s => { const key = monCryKey(s); const m = key && lsGet(key); return CRY_MODES.includes(m) ? m : cryMode(); };
-const cryChoices = m => [['inherit','跟随全局'],['auto','动漫配音（缺失用游戏）'],['game','游戏配音'],['custom','仅动漫（缺失静音）']].map(([v,n]) => `<option value="${v}"${v === m ? ' selected' : ''}>${n}</option>`).join('');
+/* @voice-prefs-begin（tests/roster-voice.test.mjs 直接执行这一段） */
+const VOICES = ['anime', 'game'];
+const VOICE_ZH = { anime: '🎬 动漫配音', game: '🎮 游戏配音' };
+const FALLBACKS = ['tts', 'game', 'mute'];
+const FALLBACK_ZH = { tts: '🗣️ 语音合成', game: '🎮 游戏叫声', mute: '🔇 不出声' };
+const normVoice = v => (v === 'auto' || v === 'custom' ? 'anime' : VOICES.includes(v) ? v : null);
+const globalVoice = () => normVoice(lsGet('pkmKantoCrySrc')) || 'anime';
+const cryFallback = () => { const v = lsGet('pkmKantoCryFallback'); return FALLBACKS.includes(v) ? v : 'tts'; };
+const monCryKey = s => (s?.uid ? 'pkmKantoCryMon:' + s.uid : null);
+const monVoicePref = s => { const k = monCryKey(s); return k ? normVoice(lsGet(k)) : null; }; // null = 跟随全局
+const voiceOf = s => monVoicePref(s) || globalVoice();
+// 语音合成念的台词：去掉括号里的动作描写，拖长音（～、——）换成停顿；纯动作（鲤鱼王“扑腾扑腾”）没法念，返回空串
+function ttsText(line) {
+  return String(line || '').replace(/[（(][^）)]*[）)]/g, '').replace(/[～~〜—–]+/g, '，').replace(/[♪♫]/g, '')
+    .replace(/，+(?=[！？!?。…]|$)/g, '').replace(/^[，、\s]+/, '').trim();
+}
+// 体型越小音调越高、语速越快：皮卡丘（0.4m）≈1.8，妙蛙种子（0.7m）≈1.45，喷火龙（1.7m）≈0.9，大岩蛇（8.8m）最低 0.45
+function ttsTone(heightDm) {
+  const hm = Number(heightDm) > 0 ? Number(heightDm) / 10 : 0.7;
+  const k = Math.log2(hm / 0.7);
+  return { pitch: Math.max(0.45, Math.min(2, 1.45 - 0.42 * k)), rate: Math.max(0.75, Math.min(1.3, 1.1 - 0.1 * k)) };
+}
+/* @voice-prefs-end */
+const cryBaseFrom = u => String(String(u || '').trim() || (BASE + 'st-bridge/audio/cries/')).replace(/\/?$/, '/');
+let CRY_BASE = cryBaseFrom(lsGet('pkmKantoCryBase') || W.PKM_CRY_BASE || P.PKM_CRY_BASE);
 const cryVol = () => { const v = Number(lsGet('pkmKantoCryVol', 70)); return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 70; };
-const cryMiss = new Set();  // 本次会话里已确认“没有自定义文件”的物种，不再重复探测
+const cryMiss = new Set();  // 已确认“没有动漫录音”的物种，不再重复探测
+const cryHave = new Set();  // 已确认有录音的物种
 const cryEls = new Map();   // url -> Audio（重复点击不用重新下载）
+const cryProbe = new Map(); // id -> 正在探测的 Promise
 const cryLast = {};         // id -> 上一次播的是第几个版本（避免连续两次同一个）
 let cryTakes = {};          // manifest.json 里的 takes：{ pikachu: 3 } 表示有 pikachu.mp3、pikachu_2.mp3、pikachu_3.mp3
-fetch(CRY_BASE + 'manifest.json?v=' + VERSION).then(r => (r.ok ? r.json() : null)).then(j => { if (j?.takes && typeof j.takes === 'object') cryTakes = j.takes; }).catch(() => {});
+function loadCryManifest() { cryTakes = {}; const base = CRY_BASE; fetch(base + 'manifest.json?v=' + VERSION).then(r => (r.ok ? r.json() : null)).then(j => { if (base === CRY_BASE && j?.takes && typeof j.takes === 'object') cryTakes = j.takes; }).catch(() => {}); }
+loadCryManifest();
+function setCryBase(url) {
+  const v = String(url || '').trim();
+  lsSet('pkmKantoCryBase', v || null);
+  CRY_BASE = cryBaseFrom(v || W.PKM_CRY_BASE || P.PKM_CRY_BASE);
+  cryMiss.clear(); cryHave.clear(); cryEls.clear(); cryProbe.clear();
+  loadCryManifest();
+}
+// 预先探测有没有录音（只取文件头）：面板能标出“有录音 / 没录音”，点击时也能立刻决定播什么（语音合成要在点击的瞬间开始才稳）
+function probeCry(id) {
+  if (!id) return Promise.resolve(false);
+  if (cryHave.has(id)) return Promise.resolve(true);
+  if (cryMiss.has(id)) return Promise.resolve(false);
+  if (cryProbe.has(id)) return cryProbe.get(id);
+  const base = CRY_BASE, url = `${base}${id}.mp3`;
+  const pr = new Promise(resolve => {
+    let a; try { a = new P.Audio(); } catch (_) { cryProbe.delete(id); resolve(false); return; }
+    const finish = ok => {
+      clearTimeout(t); a.onloadedmetadata = a.onerror = null; cryProbe.delete(id);
+      if (base !== CRY_BASE) { resolve(false); return; }
+      if (ok === true) { cryHave.add(id); if (!cryEls.has(url)) cryEls.set(url, a); }
+      else if (ok === false) cryMiss.add(id);
+      resolve(ok === true);
+    };
+    const t = setTimeout(() => finish(null), 8000); // 超时 = 不确定（例如 iOS 不预加载），点击时再按老办法边播边判断
+    a.preload = 'metadata'; a.onloadedmetadata = () => finish(true); a.onerror = () => finish(false); a.src = url;
+  });
+  cryProbe.set(id, pr);
+  return pr;
+}
 function cryUrl(id) {
   const n = Math.max(1, Math.min(9, Math.floor(Number(cryTakes[id])) || 1));
   let k = 1 + Math.floor(Math.random() * n);
@@ -229,46 +286,106 @@ function cryUrl(id) {
   cryLast[id] = k;
   return `${CRY_BASE}${id}${k > 1 ? '_' + k : ''}.mp3`;
 }
+/* ---------- 语音合成（动漫配音没有录音时的替代：用浏览器的中文语音喊名字） ---------- */
+const synth = () => { try { return P.speechSynthesis || null; } catch (_) { return null; } };
+let ttsVoice = null;
+function pickZhVoice() {
+  const sy = synth(); if (!sy) return null;
+  let all = []; try { all = sy.getVoices() || []; } catch (_) {}
+  const zh = all.filter(v => /^(zh|cmn)/i.test(String(v.lang || '')));
+  if (!zh.length) return null;
+  const cn = zh.filter(v => /CN|Hans|cmn/i.test(String(v.lang || '').replace(/_/g, '-')));
+  const pool = cn.length ? cn : zh;
+  const prefs = [/Xiaoxiao|晓晓/i, /Xiaoyi|晓伊/i, /Huihui|慧慧/i, /Yaoyao|瑶瑶/i, /Tingting|婷婷/i, /Google/i, /female|女/i];
+  // 本机语音一般都支持调音高；部分在线“自然”语音会忽略音高，同档里排后一点
+  const rank = v => { const i = prefs.findIndex(re => re.test(v.name || '')); return (i < 0 ? prefs.length : i) + (/Natural|Online|自然/i.test(v.name || '') ? 0.5 : 0); };
+  return pool.slice().sort((a, b) => rank(a) - rank(b))[0] || null;
+}
+try { const sy = synth(); if (sy) { ttsVoice = pickZhVoice(); const onV = () => { ttsVoice = pickZhVoice(); }; sy.addEventListener?.('voiceschanged', onV); cleanups.push(() => sy.removeEventListener?.('voiceschanged', onV)); } } catch (_) {}
+const ttsReady = () => !!(synth() && typeof P.SpeechSynthesisUtterance === 'function' && (ttsVoice || (ttsVoice = pickZhVoice())));
+const heightOf = name => STATS?.h?.[speciesId(name)] || null;
+let lastUtter = null; // 留住引用：有的浏览器会把还没念完的语音回收掉
+function speakCry(s, line, vol) {
+  if (!ttsReady()) return false;
+  const name = s?.species || s?.name;
+  const text = ttsText(line ?? cryLines(name)[0]); if (!text) return false;
+  try {
+    const sy = synth(); sy.cancel();
+    const u = new P.SpeechSynthesisUtterance(text), tone = ttsTone(heightOf(name));
+    u.voice = ttsVoice; u.lang = ttsVoice.lang || 'zh-CN'; u.pitch = tone.pitch; u.rate = tone.rate; u.volume = Math.max(0, Math.min(1, vol / 100));
+    lastUtter = u; sy.speak(u); try { sy.resume?.(); } catch (_) {}
+    return true;
+  } catch (_) { return false; }
+}
+/* ---------- 播放 ---------- */
 let lastCry = null;
-function stopCry() { try { lastCry?.pause?.(); } catch (_) {} lastCry = null; }
+function stopCry() { try { lastCry?.pause?.(); } catch (_) {} lastCry = null; try { const sy = synth(); if (sy?.speaking || sy?.pending) sy.cancel(); } catch (_) {} }
 function playGameCry(id, vol) {
   try { const a = new P.Audio(`https://play.pokemonshowdown.com/audio/cries/${id}.mp3`); a.volume = Math.min(1, vol / 100 * 0.78); lastCry = a; a.play().catch(() => {}); } catch (_) {}
 }
 function playCustomCry(id, vol, onMiss) {
   const url = cryUrl(id);
   let a = cryEls.get(url);
-  if (!a) { a = new P.Audio(); a.preload = 'auto'; a.addEventListener('error', () => a._pkFail?.()); a.src = url; cryEls.set(url, a); }
+  if (!a) { a = new P.Audio(); a.preload = 'auto'; a.src = url; cryEls.set(url, a); }
+  if (!a._pkHooked) { a._pkHooked = true; a.addEventListener('error', () => a._pkFail?.()); }
   a.volume = Math.max(0, Math.min(1, vol / 100));
   try { a.currentTime = 0; } catch (_) {}
   let failed = false;
   a._pkFail = () => {
     if (failed) return; failed = true; cryEls.delete(url);
     const primary = url === `${CRY_BASE}${id}.mp3`;
-    if (primary) cryMiss.add(id); else cryTakes[id] = 1;            // 文件不存在：记住，下次直接走备用方案
+    if (primary) { cryMiss.add(id); cryHave.delete(id); } else cryTakes[id] = 1; // 文件不存在：记住，下次直接走替代方案
     if (lastCry !== a) return;                                        // 已经被新的叫声顶替了
     if (primary) onMiss?.(); else playCustomCry(id, vol, onMiss);    // 备选版本缺失 → 退回第一个版本
   };
   lastCry = a;
   a.play().catch(err => { if (err && err.name === 'NotSupportedError') a._pkFail?.(); });
 }
-function playCry(s) {
-  const id = cryId(s?.species || s?.name); if (!id) return;
-  if (lsGet('pkmKantoMute') === '1') return;
-  const mode = monCryMode(s), vol = cryVol(); if (!vol) return;
-  stopCry();
-  if (mode === 'game') { playGameCry(id, vol); return; }
-  if (cryMiss.has(id)) { if (mode === 'auto') playGameCry(id, vol); return; }
-  playCustomCry(id, vol, () => { if (mode === 'auto') playGameCry(id, vol); });
+// 动漫配音缺录音时的替代：语音合成 → 失败（没有中文语音 / 台词念不出来）就改播游戏叫声；或者按设置播游戏叫声 / 不出声
+function animeFallback(s, id, vol, line) {
+  const fb = cryFallback();
+  if (fb === 'mute') return 'mute';
+  if (fb === 'tts' && speakCry(s, line, vol)) return 'tts';
+  playGameCry(id, vol); return 'game';
 }
-function cryBubble(s) {
+// 返回这一声实际怎么播的：game / anime（录音）/ tts / mute / probe（录音情况还不确定，边播边判断）
+function playCry(s, line, voice) {
+  const id = cryId(s?.species || s?.name); if (!id) return '';
+  if (lsGet('pkmKantoMute') === '1') return 'mute';
+  const vol = cryVol(); if (!vol) return 'mute';
+  stopCry();
+  if ((VOICES.includes(voice) ? voice : voiceOf(s)) === 'game') { playGameCry(id, vol); return 'game'; }
+  if (cryMiss.has(id)) return animeFallback(s, id, vol, line);
+  playCustomCry(id, vol, () => animeFallback(s, id, vol, line));
+  return cryHave.has(id) ? 'anime' : 'probe';
+}
+const pickCryLine = s => { const lines = cryLines(s?.species || s?.name); return lines[Math.floor(Math.random() * lines.length)] || '……'; };
+function cryBubble(s, line) {
   const host = PD.getElementById('pkm-kanto-ball'); if (!host) return;
   host.querySelector('.cry')?.remove();
-  const lines = cryLines(s?.species || s?.name);
-  const b = PD.createElement('div'); b.className = 'cry'; b.textContent = lines[Math.floor(Math.random() * lines.length)] || '……';
+  const b = PD.createElement('div'); b.className = 'cry'; b.textContent = line || pickCryLine(s);
   host.appendChild(b); setTimeout(() => b.remove(), 2600);
 }
-// 控制台试听：__PKM_KANTO__.testCry('皮卡丘')（返回它对应的自定义叫声文件地址）
-instance.testCry = (name = '皮卡丘') => { const s = { species: name, name }; playCry(s); cryBubble(s); const id = cryId(name); return id ? `${CRY_BASE}${id}.mp3` : '中文名表还没加载完，稍后再试'; };
+// 叫一声：声音和气泡用同一句台词（语音合成念的就是气泡里那句）
+function cry(s, voice) { const line = pickCryLine(s); const how = playCry(s, line, voice); cryBubble(s, line); return how; }
+// 动漫配音这一只实际会怎么出声（面板上的小字）
+function cryStatus(s) {
+  const id = cryId(s?.species || s?.name);
+  if (voiceOf(s) === 'game') return { cls: 'game', text: '原作叫声' };
+  if (cryHave.has(id)) return { cls: 'rec', text: '有录音' };
+  const fb = cryFallback();
+  const canSpeak = fb === 'tts' && ttsReady() && !!ttsText(cryLines(s?.species || s?.name)[0]);
+  const alt = fb === 'mute' ? '不出声' : canSpeak ? '语音合成' : '改播游戏叫声';
+  if (cryMiss.has(id)) return { cls: 'alt', text: `没有录音·${alt}` };
+  return { cls: 'wait', text: `检测录音中…（没有就${alt}）` };
+}
+// 控制台试听：__PKM_KANTO__.testCry('皮卡丘')、__PKM_KANTO__.testCry('皮卡丘', 'game')
+instance.testCry = (name = '皮卡丘', voice) => {
+  const s = { species: name, name };
+  cry(s, voice);
+  const id = cryId(name);
+  return id ? { file: `${CRY_BASE}${id}.mp3`, voice: VOICES.includes(voice) ? voice : globalVoice(), fallback: cryFallback(), tts: ttsReady() ? (ttsVoice?.name || true) : false } : '中文名表还没加载完，稍后再试';
+};
 
 /* ---------- 状态栏 <pkm_state> 与时间 ---------- */
 function parseState(text) {
@@ -497,6 +614,11 @@ function summaryText(pkm) {
       + `｜${s.nature ? '性格' + (natureZh(s.nature) || s.nature) : ''}｜羁绊 ${AVS_KEYS.map(k => K.AVS_ZH[k] + (av[k] || 0)).join('/')}｜叫声${cryText(s)}`;
   }).filter(Boolean);
   lines.push('队伍：' + (party.length ? '\n  ' + party.join('\n  ') : '（还没有宝可梦，不能发起对战）'));
+  // v1.3.8：能战斗的只数（对战名额按这个算，不要默认写成 6 只）
+  if (party.length) {
+    const ready = pkm.party.slots.filter(s => hasMon(s) && s.status !== '濒死' && s.hp !== 0);
+    lines.push(`能战斗：${ready.length} 只${ready.length ? '（' + ready.map(monName).join('、') + '）' : '，全部失去战斗能力，先去宝可梦中心'}。野外遭遇时这 ${ready.length} 只都能轮换上场（对方只有 1 只）；约定 NvN 时最多上 N 只，不足 N 只也照常开战，参赛的全倒就判负。`);
+  }
   if (pkm.party.box.length) lines.push(`电脑：${pkm.party.box.length} 只（${pkm.party.box.slice(-12).map(monName).join('、')}）`);
   const bag = Object.entries(pl.bag).filter(([, n]) => Number(n) > 0).map(([k, n]) => `${k}×${n}`);
   lines.push('背包：' + (bag.join('、') || '空'));
@@ -556,6 +678,8 @@ function buildInjection() {
     parts.push(`【当前节点】\n${pos.nodeText}`);
     if (e.hook) parts.push('介入点：' + e.hook);
     if (e.battle) parts.push('对战机会（参考阵容，按 {{user}} 实力调整）：' + e.battle);
+    const ef = K.EVENT_FORMATS?.[e.id];
+    if (ef) parts.push(`本事件赛制：${ef.rule}（${ef.n}v${ef.n}）。发起这场${ef.type === 'gym' ? '道馆战' : '比赛'}时 pkm_battle 顶层写 "teamSize":${ef.n}，对手 team 不超过 ${ef.n} 只；开战前由裁判或对手在正文里说明规矩。`);
     const stageNo = (e.stage.match(/S\d+/) || [])[0];
     for (const s of events().stages[stageNo] || []) parts.push(s.content);
   }
@@ -847,9 +971,26 @@ const HOST_CSS = BASE_CSS + `
 #pkm-kanto-ball.pos-t .cry:after{bottom:auto;top:-9px;border-top:0;border-bottom:8px solid #22201c}
 #pkm-kanto-panel .hd button.pos{margin-left:auto;padding:3px 8px}
 #pkm-kanto-panel .hd button.pos+button.mute{margin-left:4px}
-#pkm-kanto-panel .pk-snd{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin-top:8px;font-size:11.5px;color:#6b7385}
+#pkm-kanto-panel .vc{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;margin:5px 0 3px;font-size:11.5px}
+#pkm-kanto-panel .vc .vl{color:#6b7385;font-weight:650}
+#pkm-kanto-panel .seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:2px;border-radius:999px;background:#eef1f7}
+#pkm-kanto-panel .seg button{padding:2px 9px;font-size:11.5px;line-height:1.6;background:transparent;color:#4a5370;border-radius:999px;font-weight:650;box-shadow:none}
+#pkm-kanto-panel .seg button.on{background:#dc0a2d;color:#fff;box-shadow:0 1px 0 #7a0016}
+#pkm-kanto-panel .seg button.eff{background:#fff;color:#dc0a2d;box-shadow:inset 0 0 0 1.5px #ffb3bd}
+#pkm-kanto-panel .vc .hear{padding:2px 9px;font-size:11px;line-height:1.6;background:#fff1c2;color:#8a5a00}
+#pkm-kanto-panel .vc .vs{font-style:normal;font-size:10.5px;color:#8a93a6}
+#pkm-kanto-panel .vc .vs.rec{color:#1d8a4a;font-weight:700}#pkm-kanto-panel .vc .vs.alt{color:#b26a00}
+#pkm-kanto-panel .pk-snd{display:flex;flex-direction:column;gap:7px;margin-top:10px;padding:9px 10px;border-radius:12px;background:#f6f7fb;font-size:11.5px;color:#4a5370}
+#pkm-kanto-panel .pk-snd .r{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px}
+#pkm-kanto-panel .pk-snd .l{min-width:7.5em;color:#6b7385;font-weight:700}
 #pkm-kanto-panel .pk-snd input[type=range]{flex:1;min-width:90px;accent-color:#dc0a2d}
-#pkm-kanto-panel .pk-snd select{font-size:11.5px;max-width:100%}
+#pkm-kanto-panel .pk-snd .vv{min-width:2em;text-align:right;color:#1d2433}
+#pkm-kanto-panel .pk-snd .warn{color:#b26a00;font-size:11px;line-height:1.5}
+#pkm-kanto-panel .pk-snd details.adv summary{cursor:pointer;color:#2f6fe0;font-weight:650}
+#pkm-kanto-panel .pk-snd details.adv .r{margin-top:5px}
+#pkm-kanto-panel .pk-snd details.adv input[type=text]{flex:1;min-width:140px;margin:0;font:inherit;font-size:11.5px;padding:4px 8px;border-radius:8px;border:1px solid #cfd6e4;background:#fff;color:#1d2433;height:auto}
+#pkm-kanto-panel .pk-snd details.adv button{padding:3px 10px;font-size:11.5px}
+#pkm-kanto-panel .pk-snd details.adv small{display:block;color:#8a93a6;margin-top:4px;line-height:1.5;word-break:break-all}
 #pkm-kanto-panel .pk-note{font-size:11.5px;color:#6b7385;margin-top:6px}
 #pkm-kanto-panel .mon small.mv{display:flex;flex-wrap:wrap;gap:3px 8px;color:#2a3350}#pkm-kanto-panel .mon small.mv i{font-style:normal;color:#8a93a6;font-size:10.5px}#pkm-kanto-panel .mon small.mv .low i{color:#dc0a2d;font-weight:700}
 #pkm-kanto-panel .stx{margin-top:4px;font-size:11.5px}#pkm-kanto-panel .stx summary{cursor:pointer;color:#2f6fe0;font-weight:650}
@@ -872,6 +1013,21 @@ const HOST_CSS = BASE_CSS + `
 #pkm-kanto-modal .bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:linear-gradient(135deg,#1a2350,#2c3c8c);color:#fff;flex:none}
 #pkm-kanto-modal .bar .t{font-weight:800}#pkm-kanto-modal .bar .s{font-size:12px;opacity:.85;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #pkm-kanto-modal iframe{flex:1;width:100%;border:0;background:#141a33}
+#pkm-kanto-modal .bar .fmt{flex:none;font-size:12px;font-weight:800;padding:2px 10px;border-radius:999px;background:#ffcb05;color:#1b2a5c;white-space:nowrap}
+#pkm-kanto-modal .stage{flex:1;min-height:0}
+#pkm-kanto-modal .stage.pick{overflow:auto;padding:18px 12px;display:flex;justify-content:center;align-items:flex-start}
+#pkm-kanto-modal .pk-pickbox{width:min(660px,100%);background:#fff;border-radius:16px;border:3px solid #22201c;padding:14px 16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+#pkm-kanto-modal .pk-pickbox h3{margin:0 0 4px;font-size:17px;color:#1b2a5c}
+#pkm-kanto-modal .pk-pickbox p{margin:0 0 10px;color:#4a5370;font-size:12.5px;line-height:1.65}
+#pkm-kanto-modal .pk-pickgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+#pkm-kanto-modal .pk-pick{position:relative;display:flex;flex-direction:column;align-items:center;gap:1px;padding:8px 6px 10px;border-radius:14px;background:#f6f7fb;color:#1d2433;border:2px solid #e1e5ee;font-weight:650;text-align:center;box-shadow:none}
+#pkm-kanto-modal .pk-pick.on{border-color:#dc0a2d;background:#fff4f2;box-shadow:0 0 0 3px rgba(220,10,45,.15)}
+#pkm-kanto-modal .pk-pick em{position:absolute;left:6px;top:6px;width:22px;height:22px;border-radius:50%;background:#dc0a2d;color:#fff;font:800 12px/22px system-ui;font-style:normal}
+#pkm-kanto-modal .pk-pick small{color:#6b7385;font-size:11px;font-weight:500}
+#pkm-kanto-modal .pk-pick .hp{width:80%}
+#pkm-kanto-modal .pk-pick:disabled{opacity:.45}
+#pkm-kanto-modal .pk-pickfoot{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+#pkm-kanto-modal .pk-pickfoot span{margin-right:auto;color:#4a5370;font-weight:700}
 #pkm-kanto-modal .res{max-width:560px;margin:40px auto;background:#fff;border-radius:16px;padding:18px;white-space:pre-wrap}
 #pkm-kanto-toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:5000;background:#1d2433;color:#fff;padding:9px 16px;border-radius:12px;font:13px system-ui;transition:.25s;pointer-events:none}
 #pkm-kanto-toast.show{opacity:1;transform:translateX(-50%)}
@@ -1499,7 +1655,7 @@ function renderBall() {
       if (e.target.closest('.orb')) { togglePanel(); return; }
       if (e.target.closest('.follower')) { // v1.3.4：点跟随的宝可梦 → 叫一声（真实叫声 + 气泡）
         const p = readPkm(); const f = [...p.party.slots, ...p.party.box].find(s => hasMon(s) && s.uid && s.uid === p.party.follow);
-        if (f) { playCry(f); cryBubble(f); const img = e.target.closest('.follower'); img.classList.remove('hop'); void img.offsetWidth; img.classList.add('hop'); }
+        if (f) { cry(f); const img = e.target.closest('.follower'); img.classList.remove('hop'); void img.offsetWidth; img.classList.add('hop'); }
       }
     });
   }
@@ -1520,6 +1676,30 @@ function statBlock(s) {
   return `<details class="stx"><summary>能力 · 个体 · 羁绊 <span class="muted">${esc(K.QUALITY_ZH[s.quality] || '')}${cryLines(s.species || s.name)[0] ? ' · 叫声「' + esc(cryLines(s.species || s.name)[0]) + '」' : ''}</span></summary><div class="sg">${cells}</div><div class="bd2">${bars}</div></details>`;
 }
 function togglePanel() { const p = PD.getElementById('pkm-kanto-panel'); if (p) p.remove(); else renderPanel(); }
+// v1.3.8：每只宝可梦一行“配音”：默认（跟随全局）/ 🎬 动漫 / 🎮 游戏 + ▶ 试听 + 实际会怎么出声
+function voiceRow(s, where, i) {
+  const pref = monVoicePref(s), eff = pref || globalVoice(), st = cryStatus(s);
+  const chip = (v, label, title) => `<button type="button" data-op="voice" data-v="${v}" data-i="${i}" data-w="${where}" class="${(pref || '') === v ? 'on' : !pref && v === eff ? 'eff' : ''}" title="${esc(title)}">${label}</button>`;
+  return `<div class="vc"><span class="vl">配音</span><span class="seg">${chip('', '默认', `跟随下方的默认配音（现在是${VOICE_ZH[globalVoice()]}）`)}${chip('anime', '🎬 动漫', '这只用动漫配音')}${chip('game', '🎮 游戏', '这只用游戏配音（原作叫声）')}</span><button type="button" class="hear" data-op="hear" data-i="${i}" data-w="${where}" title="试听一声">▶</button><i class="vs ${st.cls}">${esc(st.text)}</i></div>`;
+}
+// 打开面板时探测这一页宝可梦有没有动漫录音，探测完刷新一次小字
+const cryUnsure = new Set();
+let cryRefreshT = null;
+function probePanel(mons) {
+  for (const s of mons) {
+    const id = cryId(s.species || s.name);
+    if (!id || voiceOf(s) !== 'anime' || cryHave.has(id) || cryMiss.has(id) || cryUnsure.has(id)) continue;
+    probeCry(id).then(ok => {
+      if (!ok && !cryMiss.has(id)) cryUnsure.add(id); // 超时：不再自动探测，点击时边播边判断
+      clearTimeout(cryRefreshT);
+      cryRefreshT = setTimeout(() => {
+        const el = PD.getElementById('pkm-kanto-panel'); if (!el) return;
+        const a = PD.activeElement; if (a && el.contains(a) && /INPUT|SELECT|TEXTAREA/.test(a.tagName)) return; // 正在拖音量 / 输入时先不重画
+        renderPanel();
+      }, 150);
+    });
+  }
+}
 function renderPanel() {
   let el = PD.getElementById('pkm-kanto-panel');
   if (!el) {
@@ -1530,40 +1710,61 @@ function renderPanel() {
   const pkm = readPkm();
   const party = pkm.party.slots.map((s, i) => ({ s, i })).filter(x => hasMon(x.s));
   const count = party.length;
-  const row = (s, where, i) => { const h = curHp(s); return `<div class="mon">${spriteImg(s.species || s.name, { shiny: s.shiny })}<div class="grow">${monLine(s, pkm)}<small class="mv">${(s.moves || []).filter(Boolean).map(m => { const t = ppText(s, m); const low = t && Number(t.split('/')[0]) <= Math.max(1, Math.floor(Number(t.split('/')[1]) / 4)); return `<span class="${low ? 'low' : ''}">${esc(m)}${t ? ` <i>${t}</i>` : ''}</span>`; }).join('') || '—'}</small><small>${h.max ? `HP ${h.hp}/${h.max}` : 'HP 满'} · ${esc(s.ability || '')}${s.nature ? ` · ${esc(natureZh(s.nature) || s.nature)}<span class="muted">（${natureNote(s.nature)}）</span>` : ''}${s.ball ? ' · ' + esc(s.ball) : ''}</small>${hpBar(s)}${statBlock(s)}${s.met ? `<small>${esc(s.met)}</small>` : ''}</div><div class="acts"><label>单只叫声 <select data-op="mon-src" data-i="${i}" data-w="${where}">${cryChoices((monCryKey(s) && lsGet(monCryKey(s))) || 'inherit')}</select></label>
+  const row = (s, where, i) => { const h = curHp(s); return `<div class="mon">${spriteImg(s.species || s.name, { shiny: s.shiny })}<div class="grow">${monLine(s, pkm)}<small class="mv">${(s.moves || []).filter(Boolean).map(m => { const t = ppText(s, m); const low = t && Number(t.split('/')[0]) <= Math.max(1, Math.floor(Number(t.split('/')[1]) / 4)); return `<span class="${low ? 'low' : ''}">${esc(m)}${t ? ` <i>${t}</i>` : ''}</span>`; }).join('') || '—'}</small>${voiceRow(s, where, i)}<small>${h.max ? `HP ${h.hp}/${h.max}` : 'HP 满'} · ${esc(s.ability || '')}${s.nature ? ` · ${esc(natureZh(s.nature) || s.nature)}<span class="muted">（${natureNote(s.nature)}）</span>` : ''}${s.ball ? ' · ' + esc(s.ball) : ''}</small>${hpBar(s)}${statBlock(s)}${s.met ? `<small>${esc(s.met)}</small>` : ''}</div><div class="acts">
     ${where === 'party' ? `${s.isLead ? '' : `<button data-op="lead" data-i="${i}">设为首发</button>`}<button data-op="follow" data-i="${i}" data-w="party">${s.uid && s.uid === pkm.party.follow ? '收回球里' : '出球跟随'}</button>${count > 1 ? `<button data-op="tobox" data-i="${i}">存进电脑</button>` : ''}`
     : `<button data-op="toparty" data-i="${i}" ${count >= 6 ? 'disabled title="队伍已满 6 只"' : ''}>加入队伍</button><button data-op="follow" data-i="${i}" data-w="box">${s.uid && s.uid === pkm.party.follow ? '收回' : '跟随'}</button>`}</div></div>`; };
   let muted = false; try { muted = P.localStorage?.getItem('pkmKantoMute') === '1'; } catch (_) {}
-  const csrc = cryMode(), cvol = cryVol();
+  const gv = globalVoice(), fb = cryFallback(), cvol = cryVol(), tts = ttsReady(), baseVal = lsGet('pkmKantoCryBase') || '';
+  const seg = (op, v, label, on, title = '') => `<button type="button" data-op="${op}" data-v="${v}" class="${on ? 'on' : ''}"${title ? ` title="${esc(title)}"` : ''}>${label}</button>`;
   el.innerHTML = `<div class="hd">🔴 我的宝可梦<button data-op="resetpos" class="pos" title="把精灵球放回右下角">📍</button><button data-op="mute" class="mute" title="跟随宝可梦的叫声">${muted ? '🔇' : '🔊'}</button><button data-op="close">✕</button></div>
     <div class="tabs"><button class="${panelTab === 'party' ? 'on' : ''}" data-tab="party">队伍 ${count}/6</button><button class="${panelTab === 'box' ? 'on' : ''}" data-tab="box">电脑 ${pkm.party.box.length}</button></div>
     <div class="bd">${panelTab === 'party' ? (party.length ? party.map(x => row(x.s, 'party', x.i)).join('') : '<div class="empty">还没有宝可梦。先在开局界面领取初始伙伴。</div>')
       : (pkm.party.box.length ? pkm.party.box.map((s, i) => row(s, 'box', i)).join('') : '<div class="empty">电脑里没有寄存的宝可梦。队伍满 6 只后收服的会传送到这里。</div>')}
-    <div class="pk-snd"><span>叫声</span><input type="range" min="0" max="100" step="5" value="${cvol}" data-op="vol" title="叫声音量"><select data-op="src" title="叫声来源（动画配音文件放在 st-bridge/audio/cries/）"><option value="auto"${csrc === 'auto' ? ' selected' : ''}>全局：动漫配音（缺失用游戏）</option><option value="custom"${csrc === 'custom' ? ' selected' : ''}>仅动画配音</option><option value="game"${csrc === 'game' ? ' selected' : ''}>全局：游戏配音</option></select></div>
-    <div class="pk-note">动漫音频暂未随包提供，请自行添加有权使用的音频；缺失时按所选模式回退游戏或静音。全局选择作为默认，单只选择可覆盖；设为“跟随全局”可取消覆盖。设置保存在当前浏览器。<br>换首发、跟随、存取电脑会直接写入变量（下一条回复生效）。剧情里的治疗、升级、进化由 AI 按规则写入。球可以拖到屏幕任意位置，📍 放回右下角。</div></div>`;
+    <div class="pk-snd">
+      <div class="r"><span class="l">叫声音量</span><input type="range" min="0" max="100" step="5" value="${cvol}" data-op="vol" title="叫声音量"><b class="vv">${cvol}</b></div>
+      <div class="r"><span class="l">默认配音</span><span class="seg">${seg('gvoice', 'anime', '🎬 动漫配音', gv === 'anime', '没单独选过的宝可梦都用动漫配音')}${seg('gvoice', 'game', '🎮 游戏配音', gv === 'game', '没单独选过的宝可梦都用原作游戏叫声')}</span></div>
+      <div class="r"><span class="l">没有动漫录音时</span><span class="seg">${seg('fallback', 'tts', '🗣️ 语音合成', fb === 'tts', tts ? '用浏览器的中文语音喊它的名字（按体型调音高）' : '这台设备暂时没有中文语音，会自动改播游戏叫声')}${seg('fallback', 'game', '🎮 游戏叫声', fb === 'game')}${seg('fallback', 'mute', '🔇 不出声', fb === 'mute')}</span></div>
+      ${fb === 'tts' && !tts ? '<div class="warn">这台设备的浏览器暂时没有中文语音：语音合成会自动改播游戏叫声（在系统设置里装上中文语音包后刷新即可）。</div>' : ''}
+      <details class="adv"${baseVal ? ' open' : ''}><summary>动漫录音地址（高级）</summary><div class="r"><input type="text" data-op="cbase" value="${esc(baseVal)}" placeholder="留空 = 网站的 st-bridge/audio/cries/" spellcheck="false"><button type="button" data-op="cbase-save">保存</button></div><small>录音按「英文名小写.mp3」命名（pikachu.mp3、mrmime.mp3……对照表见网站 st-bridge/audio/cries/CHECKLIST.md）。只放在自己电脑上：放进酒馆的 public/pkm-cries/，这里填 /pkm-cries/。现在读取：${esc(CRY_BASE)}</small></details>
+    </div>
+    <div class="pk-note">🎬 动漫配音：有录音就播你的录音；还没有录音的按上面的设置——语音合成喊它的名字 / 改播游戏叫声 / 不出声。🎮 游戏配音：原作游戏叫声。每只的「配音」可以单独选，「默认」= 跟随上面的默认配音；点 ▶ 试听。配音设置保存在当前浏览器。<br>换首发、跟随、存取电脑会直接写入变量（下一条回复生效）。剧情里的治疗、升级、进化由 AI 按规则写入。球可以拖到屏幕任意位置，📍 放回右下角。</div></div>`;
   placePanel();
+  probePanel(panelTab === 'party' ? party.map(x => x.s) : pkm.party.box.filter(hasMon));
 }
-// 叫声音量 / 来源：拖动滑块实时记下，松手或切换来源后用跟随（或首发）的宝可梦试听一声
-function onPanelInput(e) { if (e.target?.dataset?.op === 'vol') lsSet('pkmKantoCryVol', e.target.value); }
-function onPanelChange(e) {
-  const t = e.target, op = t?.dataset?.op;
-  if (op === 'mon-src') {
-    const p = readPkm(), s = (t.dataset.w === 'box' ? p.party.box : p.party.slots)[Number(t.dataset.i)];
-    const key = monCryKey(s); if (!key) { toast('宝可梦标识尚未就绪，请重新打开面板'); return; }
-    lsSet(key, CRY_MODES.includes(t.value) ? t.value : null);
-    playCry(s); cryBubble(s); return;
+// 叫声音量：拖动滑块实时记下，松手后用跟随（或首发）的宝可梦试听一声
+function onPanelInput(e) {
+  const t = e.target; if (t?.dataset?.op !== 'vol') return;
+  lsSet('pkmKantoCryVol', t.value); const v = t.parentElement?.querySelector('.vv'); if (v) v.textContent = t.value;
+}
+function onPanelChange(e) { const t = e.target; if (t?.dataset?.op === 'vol') { lsSet('pkmKantoCryVol', t.value); previewCry(); } }
+function previewMon() { const p = readPkm(), mons = [...p.party.slots, ...p.party.box].filter(hasMon); return mons.find(x => x.uid && x.uid === p.party.follow) || mons.find(x => x.isLead) || mons[0] || null; }
+function previewCry(s = previewMon(), voice) { if (s) cry(s, voice); }
+// 配音相关按钮（不写变量，只改本机设置；单只设置需要宝可梦的 uid，没有就先写一次变量补上）
+async function onVoiceOp(b) {
+  const op = b.dataset.op;
+  if (op === 'gvoice') { lsSet('pkmKantoCrySrc', VOICES.includes(b.dataset.v) ? b.dataset.v : 'anime'); renderPanel(); previewCry(); return; }
+  if (op === 'fallback') { lsSet('pkmKantoCryFallback', FALLBACKS.includes(b.dataset.v) ? b.dataset.v : 'tts'); renderPanel(); previewCry(undefined, 'anime'); return; }
+  if (op === 'cbase-save') {
+    const v = String(b.parentElement?.querySelector('[data-op=cbase]')?.value || '').trim();
+    if (v && !/^(https?:\/\/|\/)/i.test(v)) { toast('录音地址要以 http(s):// 或 / 开头，例如 /pkm-cries/', 'warning'); return; }
+    setCryBase(v); cryUnsure.clear(); toast(v ? '动漫录音地址已保存：' + CRY_BASE : '已恢复默认录音地址'); renderPanel(); return;
   }
-  if (op === 'vol') lsSet('pkmKantoCryVol', t.value);
-  else if (op === 'src') lsSet('pkmKantoCrySrc', CRY_MODES.includes(t.value) ? t.value : 'auto');
-  else return;
-  const p = readPkm(), mons = [...p.party.slots, ...p.party.box].filter(hasMon);
-  const s = mons.find(x => x.uid && x.uid === p.party.follow) || mons.find(x => x.isLead) || mons[0];
-  if (s) { playCry(s); cryBubble(s); }
+  const where = b.dataset.w, i = Number(b.dataset.i);
+  const pick = p => (where === 'box' ? p.party.box : p.party.slots)[i];
+  let s = pick(readPkm()); if (!hasMon(s)) return;
+  if (op === 'voice') {
+    if (!s.uid) { await writePkm(() => {}); s = pick(readPkm()); } // 写一次变量会给每只都补上 uid
+    const key = monCryKey(s); if (!key) { toast('这只宝可梦还没有身份标识，稍后再试', 'warning'); return; }
+    lsSet(key, VOICES.includes(b.dataset.v) ? b.dataset.v : null);
+    renderPanel();
+  }
+  cry(s);
 }
 async function onPanelClick(e) {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.tab) { panelTab = b.dataset.tab; renderPanel(); return; }
   const op = b.dataset.op, i = Number(b.dataset.i);
+  if (['voice', 'hear', 'gvoice', 'fallback', 'cbase-save'].includes(op)) { try { await onVoiceOp(b); } catch (err) { toast(err?.message || String(err), 'warning'); } return; }
   if (op === 'close') { PD.getElementById('pkm-kanto-panel')?.remove(); return; }
   if (op === 'resetpos') { saveBallPos(null); placeBall(PD.getElementById('pkm-kanto-ball')); return; }
   if (op === 'mute') { try { const m = P.localStorage.getItem('pkmKantoMute') === '1'; P.localStorage.setItem('pkmKantoMute', m ? '0' : '1'); } catch (_) {} renderPanel(); return; }
@@ -1571,7 +1772,7 @@ async function onPanelClick(e) {
     await writePkm(pkm => {
       const slots = pkm.party.slots;
       if (op === 'lead') slots.forEach((s, k) => { if (hasMon(s)) s.isLead = k === i; });
-      else if (op === 'follow') { const s = b.dataset.w === 'box' ? pkm.party.box[i] : slots[i]; if (!s.uid) s.uid = uid(); pkm.party.follow = pkm.party.follow === s.uid ? null : s.uid; if (pkm.party.follow) { const snap = clone(s); setTimeout(() => { playCry(snap); cryBubble(snap); }, 650); } }
+      else if (op === 'follow') { const s = b.dataset.w === 'box' ? pkm.party.box[i] : slots[i]; if (!s.uid) s.uid = uid(); pkm.party.follow = pkm.party.follow === s.uid ? null : s.uid; if (pkm.party.follow) { const snap = clone(s); setTimeout(() => { cry(snap); }, 650); } }
       else if (op === 'tobox') {
         if (slots.filter(hasMon).length <= 1) throw new Error('队伍里至少要留一只宝可梦');
         const s = slots[i]; const wasLead = s.isLead; s.isLead = false; delete s.slot; pkm.party.box.push(s);
@@ -1600,7 +1801,10 @@ function entryStatus(sess, extra = {}) {
   const ended = !!rec || sess.status === 'ended';
   const open = !!modal && modal.key === sess.key;
   const summary = extra.summary || (ended ? `已结束：${rec?.summary || sess.summary || ''}` : open ? '对战进行中……' : sess.error ? '上次打开失败：' + sess.error : '对战系统已就绪，点击开始。');
-  try { postFromHost(sess.source, { channel: CH, type: 'status', key: sess.key, token: sess.token, summary, ended, open, error: sess.error || null }); } catch (_) {}
+  // v1.3.8：按当前队伍算好的赛制，入口卡片上显示（例：3v3 · 我方只有2只，照常开战）
+  let format = '', rule = '';
+  try { if (sess.cfg) { const f = battleFormat(sess.cfg, playerEntries(readPkm()).length); format = f.label; rule = f.rule || ''; } } catch (_) {}
+  try { postFromHost(sess.source, { channel: CH, type: 'status', key: sess.key, token: sess.token, summary, ended, open, error: sess.error || null, format, rule }); } catch (_) {}
 }
 function onHostMessage(e) {
   const d = e.data; if (!d || typeof d !== 'object') return;
@@ -1609,7 +1813,7 @@ function onHostMessage(e) {
     let sess = sessions.get(d.key);
     if (!sess || sess.token !== d.token) { sess = { ...(sess || {}), key: d.key, token: d.token, status: sess?.status || 'idle' }; sessions.set(d.key, sess); }
     sess.source = e.source;
-    if (d.type === 'hello') entryStatus(sess);
+    if (d.type === 'hello') { if (d.cfg && typeof d.cfg === 'object') sess.cfg = d.cfg; entryStatus(sess); }
     else if (d.type === 'open') {
       if (d.cfg) sess.cfg = d.cfg;
       const rec = storedBattle(d.key);
@@ -1636,15 +1840,67 @@ function playerEntries(pkm) {
     return e;
   });
 }
+/* @format-begin（tests/roster-voice.test.mjs 直接执行这一段）
+ * v1.3.8 赛制（几 v 几）：
+ *   野外 / 捕捉：对方只出 1 只；我方队伍里能战斗的都可以轮换上场——最多 6 只，没有 6 只就按实际只数（不补、不虚构）。
+ *   道馆 / 训练家 / 劲敌 / 大会……：NvN。N 的来源依次是：对战块的 teamSize（或 format:"3v3"）> 道馆规矩表（按事件、再按馆主）> 对方阵容只数。
+ *   双方都按“实际能上场的只数”开战（不足 N 只也照常开打）；参赛的全部失去战斗能力就立刻判负。
+ *   我方能战斗的多于 N 只时，开战前在对战窗口里点选参赛的 N 只（点选顺序 = 出场顺序）。 */
+const CN_NUM = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
+const fmtN = x => { const n = CN_NUM[x] || Number(x); return Number.isInteger(n) && n >= 1 && n <= 6 ? n : null; };
+// 3 / "3" / "3只" / "3v3" / "3对3" / "三对三" / "各3只" / "2v1" → { p: 我方上限, e: 对方上限 }
+function parseFormat(v) {
+  if (v == null || v === '' || typeof v === 'boolean' || typeof v === 'object') return null;
+  const t = String(v).trim();
+  let m = t.match(/^([1-6一二两三四五六])\s*只?$/);
+  if (m) { const n = fmtN(m[1]); return n ? { p: n, e: n } : null; }
+  m = t.match(/([1-6一二两三四五六])\s*(?:v|vs|对|比|:|：|x|×)\s*([1-6一二两三四五六])/i);
+  if (m) { const a = fmtN(m[1]), b = fmtN(m[2]); return a && b ? { p: a, e: b } : null; }
+  m = t.match(/各\s*([1-6一二两三四五六])\s*只/);
+  if (m) { const n = fmtN(m[1]); return n ? { p: n, e: n } : null; }
+  return null;
+}
+function tableFormat(cfg, type) {
+  const ev = (String(cfg?.event || '').toUpperCase().match(/(?:EP|SP|MOV)\d{2,3}/) || String(cfg?.id || '').toUpperCase().match(/(?:EP|SP|MOV)\d{2,3}/) || [])[0];
+  const byEvent = ev && K.EVENT_FORMATS?.[ev];
+  if (byEvent && byEvent.type === type) return byEvent;
+  if (type === 'gym') { const who = `${cfg?.opponent || ''} ${cfg?.title || ''} ${cfg?.id || ''}`; return (K.GYM_RULES || []).find(r => r.re.test(who)) || null; }
+  return null;
+}
+function battleFormat(cfg, healthy) {
+  const type = String(cfg?.type || 'trainer').toLowerCase();
+  const listed = Array.isArray(cfg?.team) ? cfg.team.length : 0;
+  const have = Math.max(0, Math.floor(Number(healthy) || 0));
+  if (type === 'wild') {
+    const player = Math.min(6, have);
+    return { type, wild: true, name: '野外', playerMax: 6, enemyMax: 1, player, enemy: Math.min(1, listed), source: 'wild',
+      rule: '野外遭遇：对方只有 1 只，我方队伍里能战斗的都可以轮换上场（最多 6 只）',
+      tag: `我方${player}只 vs 野生1只`, label: `野外 · 我方${player}只 vs 野生1只` };
+  }
+  let f = null, source = 'cfg', rule = String(cfg?.rule || cfg?.rules?.text || '').trim();
+  for (const v of [cfg?.teamSize, cfg?.rules?.teamSize, cfg?.format, cfg?.rules?.format]) { f = parseFormat(v); if (f) break; }
+  if (!f) { const t = tableFormat(cfg, type); if (t) { f = { p: t.n, e: t.n }; source = 'table'; if (!rule) rule = t.rule; } }
+  if (!f) { const n = Math.max(1, Math.min(6, listed || 1)); f = { p: n, e: n }; source = 'team'; }
+  const player = Math.min(f.p, have), enemy = Math.min(f.e, listed), name = `${f.p}v${f.e}`;
+  const short = [player < f.p ? `我方只有${player}只` : '', enemy < f.e ? `对方只有${enemy}只` : ''].filter(Boolean).join('、');
+  if (!rule) rule = f.p === f.e ? `${name}：双方各最多 ${f.p} 只，单打轮换` : `${name}：我方最多 ${f.p} 只，对方最多 ${f.e} 只`;
+  return { type, wild: false, name, playerMax: f.p, enemyMax: f.e, player, enemy, source, rule,
+    tag: name + (short ? `（${short}）` : ''), label: name + (short ? ` · ${short}，照常开战` : '') };
+}
+// 参赛名单：开战前点选过就按点选顺序；否则首发优先、按队伍顺序取到上限
+function pickPlayers(entries, max, pick) {
+  if (Array.isArray(pick) && pick.length) {
+    const by = new Map(entries.map(e => [e.hostSlot, e])), out = [];
+    for (const i of pick) { const e = by.get(i); if (e && !out.includes(e)) out.push(e); if (out.length >= max) break; }
+    if (out.length) return out;
+  }
+  return entries.slice(0, max);
+}
 function engineConfig(spec, pkm, tag) {
   const cfg = spec.cfg || {};
-  const type = String(cfg.type || 'trainer').toLowerCase();
-  let team = Array.isArray(cfg.team) ? cfg.team : [];
-  // 单打：名额是整场可用阵容大小，不是同时上场数。
-  const rawSize = Number(cfg.teamSize ?? cfg.rules?.teamSize);
-  const teamSize = Number.isInteger(rawSize) && rawSize >= 1 && rawSize <= 6 ? rawSize
-    : type === 'gym' ? Math.max(1, Math.min(6, team.length)) : 6;
-  team = team.slice(0, type === 'wild' ? 1 : teamSize);
+  const entries = playerEntries(pkm);
+  const fmt = battleFormat(cfg, entries.length), type = fmt.type;
+  const team = (Array.isArray(cfg.team) ? cfg.team : []).slice(0, fmt.enemyMax);
   // v1.3.4：对手 / 野生宝可梦也有个体值和性格（按这场对战的 key 固定，重开同一场不会变；收服后沿用）
   const band = ['gym', 'rival', 'boss', 'league'].includes(type) ? 'high' : null;
   const enemy = team.map((t, i) => {
@@ -1656,45 +1912,96 @@ function engineConfig(spec, pkm, tag) {
     return e;
   });
   const balls = Object.fromEntries(Object.entries(K.BALL_ZH).map(([id, zh]) => [id, Math.max(0, Math.floor(Number(pkm.player.bag[zh]) || 0))]));
-  const out = { rules: { teamSize, playerLimit: type === 'wild' ? 6 : teamSize, enemyLimit: type === 'wild' ? 1 : teamSize }, encounter: { type: type === 'wild' ? 'wild' : 'trainer' }, difficulty: cfg.difficulty || K.DIFFICULTY_BY_TYPE[type] || 'normal',
-    p1: { entrants: [{ name: 'host-player', party: playerEntries(pkm).slice(0, type === 'wild' ? 6 : teamSize) }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
+  const out = { rules: { teamSize: Math.max(fmt.playerMax, fmt.enemyMax), playerLimit: fmt.playerMax, enemyLimit: fmt.enemyMax, tag: fmt.wild ? `${fmt.player}只 vs 1只` : fmt.name, label: fmt.label, rule: fmt.rule },
+    encounter: { type: fmt.wild ? 'wild' : 'trainer' }, difficulty: cfg.difficulty || K.DIFFICULTY_BY_TYPE[type] || 'normal',
+    p1: { entrants: [{ name: 'host-player', party: pickPlayers(entries, fmt.playerMax, spec.pick) }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
     host: { tag, balls }, ui: spec.ui || null };
   const w = K.WEATHER[String(cfg.environment || '').trim()];
   if (w) out.environment = { weather: w, weatherTurns: 0 };
-  return { engine: out, balls, type };
+  return { engine: out, balls, type, fmt };
 }
+/* @format-end */
 function openBattle(spec) {
   if (modal) { toast('已经有一场对战在进行中'); return; }
   const pkm = readPkm();
   const sess = spec.sess || null;
   const cfg = spec.cfg;
   if (!cfg || !Array.isArray(cfg.team) || !cfg.team.length) { toast('对战块里没有对手宝可梦（team）', 'warning'); if (sess) { sess.error = '对战块缺少 team'; entryStatus(sess); } return; }
-  const tag = uid();
-  const { engine, balls, type } = engineConfig(spec, pkm, tag);
-  if (!engine.p1.entrants[0].party.length) {
+  const entries = playerEntries(pkm);
+  if (!entries.length) {
     const msg = pkm.party.slots.some(hasMon) ? '队伍里的宝可梦都失去了战斗能力，先去宝可梦中心治疗吧。' : '你还没有宝可梦，不能对战。';
     toast(msg, 'warning'); if (sess) { sess.error = msg; entryStatus(sess); } return;
   }
+  const fmt = battleFormat(cfg, entries.length);
   ensureHostStyle();
   const el = PD.createElement('div'); el.id = 'pkm-kanto-modal'; el.className = 'pkb';
-  const formatLabel = type === 'wild' ? '最多6只轮换 vs 1只' : `${engine.rules.teamSize}v${engine.rules.teamSize} · 我方${engine.p1.entrants[0].party.length}只/对方${engine.p2.entrants[0].party.length}只` ;
-  const title = cfg.title || `${K.TYPE_LABEL[type] || '对战'}${cfg.opponent ? ' · ' + cfg.opponent : ''}`;
-  el.innerHTML = `<div class="bar"><span class="t">⚔️ ${esc(title)} · ${esc(formatLabel)}</span><span class="s">${esc(cfg.lines?.start ? '「' + cfg.lines.start + '」' : '正在连接对战系统……')}</span><button class="red" data-op="close">返回剧情</button></div>
-    <iframe allow="autoplay" referrerpolicy="no-referrer-when-downgrade" src="${esc(BASE)}index.html?embed=1&v=${VERSION}&t=${Date.now().toString(36)}"></iframe>`;
+  const title = cfg.title || `${K.TYPE_LABEL[fmt.type] || '对战'}${cfg.opponent ? ' · ' + cfg.opponent : ''}`;
+  el.innerHTML = `<div class="bar"><span class="t">⚔️ ${esc(title)}</span><span class="fmt" title="${esc(fmt.rule)}">${esc(fmt.label)}</span><span class="s"></span><button class="red" data-op="close">返回剧情</button></div><div class="stage"></div>`;
   PD.body.appendChild(el);
-  modal = { el, frame: el.querySelector('iframe'), tag, key: spec.key, spec, cfg, engine, balls, type, sent: false, done: false, sess, timer: null };
+  modal = { el, frame: null, tag: null, key: spec.key, spec, cfg, fmt, engine: null, balls: null, type: fmt.type, sent: false, done: false, sess, timer: null };
   if (sess) { sess.status = 'open'; sess.error = null; entryStatus(sess); }
   el.querySelector('[data-op=close]').onclick = closeBattle;
-  const send = () => { if (!modal || modal.sent || modal.tag !== tag) return; modal.sent = true; try { modal.frame.contentWindow.postMessage({ type: 'PKM_BATTLE_CONFIG', payload: engine }, '*'); } catch (err) { LOG(err); } };
-  modal.frame.addEventListener('load', () => setTimeout(send, 30));
-  modal.timer = setTimeout(() => { if (modal && modal.tag === tag && !modal.started && !modal.done) setBar('对战网页加载较慢或失败：请确认网站已部署 v' + VERSION + '（页脚版本号），再点“返回剧情”后重试。'); }, 15000);
+  if (!fmt.wild && entries.length > fmt.playerMax && !Array.isArray(spec.pick)) showPicker(modal, pkm, entries);
+  else launchBattle(modal, spec.pick || null);
+}
+// 真正开战：建对战网页的 iframe 并发配置（选人之后才走到这里）
+function launchBattle(m, pick) {
+  if (modal !== m) return;
+  const pkm = readPkm(); // 选人期间变量可能变了，按最新的算
+  const tag = uid();
+  const { engine, balls, type, fmt } = engineConfig({ ...m.spec, pick }, pkm, tag);
+  if (!engine.p1.entrants[0].party.length) { toast('队伍里的宝可梦都失去了战斗能力，先去宝可梦中心治疗吧。', 'warning'); closeBattle(true); return; }
+  Object.assign(m, { tag, engine, balls, type, fmt });
+  const f = m.el.querySelector('.bar .fmt'); if (f) { f.textContent = fmt.wild ? fmt.label : `${fmt.name} · 我方${engine.p1.entrants[0].party.length}只 vs 对方${engine.p2.entrants[0].party.length}只`; f.title = fmt.rule; }
+  const stage = m.el.querySelector('.stage');
+  const frame = PD.createElement('iframe');
+  frame.setAttribute('allow', 'autoplay'); frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+  frame.src = `${BASE}index.html?embed=1&v=${VERSION}&t=${Date.now().toString(36)}`;
+  stage.replaceWith(frame);
+  m.frame = frame;
+  setBar(m.cfg.lines?.start ? '「' + m.cfg.lines.start + '」' : '正在连接对战系统……');
+  const send = () => { if (modal !== m || m.sent) return; m.sent = true; try { m.frame.contentWindow.postMessage({ type: 'PKM_BATTLE_CONFIG', payload: engine }, '*'); } catch (err) { LOG(err); } };
+  frame.addEventListener('load', () => setTimeout(send, 30));
+  m.timer = setTimeout(() => { if (modal === m && !m.started && !m.done) setBar('对战网页加载较慢或失败：请确认网站已部署 v' + VERSION + '（页脚版本号），再点“返回剧情”后重试。'); }, 15000);
+}
+// v1.3.8：我方能战斗的多于 N 只时，开战前点选参赛的 N 只（默认勾好首发 + 队伍顺序；点选顺序 = 出场顺序）
+function showPicker(m, pkm, entries) {
+  const n = m.fmt.playerMax, ok = new Set(entries.map(e => e.hostSlot));
+  let sel = entries.slice(0, n).map(e => e.hostSlot);
+  const stage = m.el.querySelector('.stage'); stage.className = 'stage pick';
+  const draw = () => {
+    const cards = pkm.party.slots.map((s, i) => {
+      if (!hasMon(s)) return '';
+      const can = ok.has(i), k = sel.indexOf(i), h = curHp(s);
+      return `<button type="button" class="pk-pick${k >= 0 ? ' on' : ''}" data-op="pick" data-i="${i}"${can ? '' : ' disabled'}>${k >= 0 ? `<em>${k + 1}</em>` : ''}${spriteImg(s.species || s.name, { shiny: s.shiny })}<b>${esc(monName(s))}</b><small>Lv${esc(s.lv ?? '?')} · ${can ? (h.max && !h.full ? `HP ${h.hp}/${h.max}` : 'HP 满') + (s.status ? '·' + esc(s.status) : '') : '濒死，不能参赛'}</small>${can ? hpBar(s) : ''}</button>`;
+    }).join('');
+    stage.innerHTML = `<div class="pk-pickbox"><h3>选出参赛的 ${n} 只宝可梦</h3><p>${esc(m.fmt.rule)}。<br>参赛的 ${n} 只全部失去战斗能力就判负；没选上的这场不上场，体力也不变。点选顺序就是出场顺序（①号首发）。</p><div class="pk-pickgrid">${cards}</div><div class="pk-pickfoot"><span>已选 ${sel.length} / ${n}</span><button type="button" class="ghost" data-op="pick-auto">按队伍顺序</button><button type="button" class="red" data-op="pick-go"${sel.length === n ? '' : ' disabled'}>开始对战（${esc(m.fmt.name)}）</button></div></div>`;
+  };
+  stage.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b || b.disabled || modal !== m) return;
+    const op = b.dataset.op;
+    if (op === 'pick') {
+      const i = Number(b.dataset.i), k = sel.indexOf(i);
+      if (k >= 0) sel.splice(k, 1); else if (sel.length < n) sel.push(i); else if (n === 1) sel = [i]; else { toast(`最多选 ${n} 只：先点掉一只再换`); return; }
+      draw(); return;
+    }
+    if (op === 'pick-auto') { sel = entries.slice(0, n).map(e => e.hostSlot); draw(); return; }
+    if (op === 'pick-go' && sel.length === n) {
+      // 记 uid 再换回槽位：选人期间如果队伍顺序变了也不会选错
+      const uids = sel.map(i => pkm.party.slots[i]?.uid || null), fresh = readPkm();
+      const pick = sel.map((i, k) => { const u = uids[k]; const j = u ? fresh.party.slots.findIndex(x => x?.uid === u) : -1; return j >= 0 ? j : i; });
+      launchBattle(m, pick);
+    }
+  });
+  draw();
+  setBar(`${m.fmt.name}：先选出参赛的 ${n} 只`);
 }
 function setBar(text) { const s = modal?.el.querySelector('.bar .s'); if (s) s.textContent = text; }
-function closeBattle() {
+function closeBattle(silent) {
   if (!modal) return;
   const m = modal; modal = null; clearTimeout(m.timer); m.el.remove();
   if (m.sess) { if (!m.done) m.sess.status = 'idle'; entryStatus(m.sess); }
-  if (!m.done) toast('对战没有结束，已放弃。可以重新点“开始对战”。');
+  if (!m.done && silent !== true) toast(m.frame ? '对战没有结束，已放弃。可以重新点“开始对战”。' : '还没开战，已取消。可以重新点“开始对战”。');
 }
 function onEngineMessage(d) {
   const m = modal; if (!m) return;
@@ -1726,9 +2033,19 @@ function monFromCapture(cap, enemy, cfgEnemy, pkm) {
   ensureIndividual(mon); // 资质按个体值推算；缺项补齐
   return mon;
 }
+// v1.3.8：胜负判定说明（参赛的全部失去战斗能力 = 判负）
+function verdictText(outcome, fmt, pTeam, eTeam) {
+  const pn = pTeam.length, en = eTeam.length;
+  if (outcome === 'defeat') return `我方参赛的${pn}只全部失去战斗能力，判负${!fmt?.wild && fmt?.playerMax > pn ? `（不足 ${fmt.playerMax} 只照常开战，${pn} 只全倒即输）` : ''}`;
+  if (outcome === 'victory') return fmt?.wild ? `野生的${zhSpecies(eTeam[0]?.baseSpecies || eTeam[0]?.species) || '宝可梦'}失去战斗能力，获胜` : `对方参赛的${en}只全部失去战斗能力，获胜`;
+  if (outcome === 'captured') return '收服成功，对战结束';
+  return '对战中止，不计胜负';
+}
 async function applyResult(m, payload) {
   const outcome = payload.outcome || (payload.winner === 'player' ? 'victory' : payload.winner === 'enemy' ? 'defeat' : 'draw');
   const cfg = m.cfg, cfgTeam = Array.isArray(cfg.team) ? cfg.team : [];
+  const fmt = m.fmt || battleFormat(cfg, (payload.playerTeam || []).length);
+  const fmtText = fmt.wild ? `野外 · ${fmt.tag}` : fmt.name;
   let placed = null, capturedName = null;
   let summaryParts = [];
   const bondNotes = [];
@@ -1771,7 +2088,7 @@ async function applyResult(m, payload) {
     } else if (cfgTeam[0]?.shiny && m.type === 'wild') { const n = zhSpecies(payload.enemyTeam?.[0]?.baseSpecies) || cfgTeam[0].species; if (!pkm.dex.shiny[n]) pkm.dex.shiny[n] = [eventId, placeText(pkm), dateText(pkm), false]; }
     // 5) 战绩
     pkm.battle.count += 1; if (outcome === 'victory') pkm.battle.wins += 1;
-    summaryParts.push(`${OUTCOME_ZH[outcome] || '结束'}${cfg.opponent ? ' · 对手：' + cfg.opponent : ''} · ${payload.turns || 0} 回合`);
+    summaryParts.push(`${OUTCOME_ZH[outcome] || '结束'} · ${fmtText}${cfg.opponent ? ' · 对手：' + cfg.opponent : ''} · ${payload.turns || 0} 回合`);
     if (capturedName) summaryParts.push(`收服了${capturedName}（${placed}）`);
     if (bondNotes.length) summaryParts.push('羁绊：' + bondNotes.join('，'));
     const summary = summaryParts.join('；');
@@ -1785,18 +2102,25 @@ async function applyResult(m, payload) {
   });
   // 6) 结果文本 → 输入框
   const pkm = readPkm();
+  const pTeam = payload.playerTeam || [], eTeam = payload.enemyTeam || [];
+  const joined = new Set(pTeam.map(p => p.hostSlot));
+  const bench = pkm.party.slots.map((s, i) => (hasMon(s) && !joined.has(i) ? monName(s) + (s.status === '濒死' || s.hp === 0 ? '（濒死）' : '') : null)).filter(Boolean);
+  const verdict = verdictText(outcome, fmt, pTeam, eTeam);
   const res = {
     id: cfg.id || null, event: cfg.event || '自由', type: m.type, opponent: cfg.opponent || null, outcome, turns: payload.turns || 0,
-    player: (payload.playerTeam || []).map(p => { const s = pkm.party.slots[p.hostSlot]; return { name: s ? monName(s) : zhSpecies(p.baseSpecies), lv: p.level, hp: p.fainted ? 0 : p.hp, maxHp: p.maxHp, fainted: !!p.fainted, status: K.STATUS_TO_ZH[p.status] || null }; }),
+    format: fmt.wild ? '野外1只' : fmt.name, rule: fmt.rule, lineup: { player: pTeam.length, enemy: eTeam.length }, verdict, bench,
+    player: (payload.playerTeam || []).map(p => { const s = pkm.party.slots[p.hostSlot]; return { name: s ? monName(s) : zhSpecies(p.baseSpecies), lv: p.level, hp: p.fainted ? 0 : p.hp, maxHp: p.maxHp, fainted: !!p.fainted, status: K.STATUS_TO_ZH[p.status] || null, entered: p.participated !== false }; }),
     enemy: (payload.enemyTeam || []).map(p => ({ species: zhSpecies(p.baseSpecies || p.species), lv: p.level, hp: p.hp, maxHp: p.maxHp, fainted: !!p.fainted, status: K.STATUS_TO_ZH[p.status] || null })),
     capture: outcome === 'captured' && payload.capture ? { ball: K.BALL_ZH[payload.capture.ball] || '精灵球', species: capturedName, level: payload.capture.spec?.level, placed } : null,
     stakes: cfg.stakes || null,
   };
   const used = Object.entries(K.BALL_ZH).map(([id, zh]) => { const n = (m.balls[id] || 0) - (Number(payload.ballStock?.[id]) || 0); return n > 0 ? `${zh}×${n}` : null; }).filter(Boolean);
   const line = cfg.lines?.[outcome === 'defeat' ? 'player_lose' : 'player_win'];
-  const human = [`【战斗结果】${OUTCOME_ZH[outcome] || '结束'}｜${res.opponent || (m.type === 'wild' ? '野生宝可梦' : '对手')}｜${res.turns} 回合`,
-    `我方：${res.player.map(p => `${p.name} Lv${p.lv} ${p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}${p.status ? '·' + p.status : ''}`}`).join('；')}`,
-    `对手：${res.enemy.map(p => `${p.species} Lv${p.lv} ${outcome === 'captured' && !p.fainted ? '被收服' : p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}`}`).join('；')}`,
+  const human = [`【战斗结果】${OUTCOME_ZH[outcome] || '结束'}｜${fmt.wild ? `野外遭遇（${fmt.tag}）` : `${K.TYPE_LABEL[m.type] || '对战'} ${fmt.name}`}｜${res.opponent || (m.type === 'wild' ? '野生宝可梦' : '对手')}｜${res.turns} 回合`,
+    `判定：${verdict}。`,
+    `${fmt.wild ? `我方（可轮换${res.player.length}只）` : `我方参赛（${res.player.length}只）`}：${res.player.map(p => `${p.name} Lv${p.lv} ${p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}${p.status ? '·' + p.status : ''}`}${p.entered ? '' : '（没轮到出场）'}`).join('；')}`,
+    bench.length ? `未参赛（这场没上场，体力不变）：${bench.join('、')}` : '',
+    `对手${fmt.wild ? '' : `参赛（${res.enemy.length}只）`}：${res.enemy.map(p => `${p.species} Lv${p.lv} ${outcome === 'captured' && !p.fainted ? '被收服' : p.fainted ? '濒死' : `HP ${p.hp}/${p.maxHp}`}`).join('；')}`,
     res.capture ? `收服：用${res.capture.ball}收服了 ${res.capture.species} Lv${res.capture.level}，已放进${placed}。` : '',
     used.length ? `消耗：${used.join('、')}` : '',
     bondNotes.length ? `羁绊（脚本已加）：${bondNotes.join('，')}` : '',

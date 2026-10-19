@@ -1,7 +1,7 @@
-// 宝可梦·关都之旅 · 外置桥接数据（v1.3.2）
+// 宝可梦·关都之旅 · 外置桥接数据（v1.3.2 起；v1.3.8 加赛制表）
 // 地图坐标、附近野生遭遇表、初始伙伴、道具图标映射。全部为同人整理数据。
 
-export const VERSION = '1.3.7';
+export const VERSION = '1.3.8';
 
 /* ---------- 关都地图（示意，坐标为 0~100 的画布比例） ---------- */
 export const MAP_NODES = [
@@ -141,6 +141,38 @@ export const DIFFICULTY_BY_TYPE = { wild: 'normal', trainer: 'normal', rocket: '
 export const WEATHER = { 晴: 'sunnyday', 晴天: 'sunnyday', 雨: 'raindance', 下雨: 'raindance', 沙暴: 'sandstorm', 雪: 'snow', 下雪: 'snow', 冰雹: 'snow' };
 export const STATUS_TO_ZH = { par: '麻痹', brn: '灼伤', psn: '中毒', tox: '中毒', slp: '睡眠', frz: '冰冻' };
 export const TYPE_LABEL = { wild: '野生', trainer: '训练家', gym: '道馆战', rival: '劲敌', boss: '强敌', rocket: '火箭队', league: '联盟大会' };
+
+/* ---------- v1.3.8：赛制（几 v 几） ----------
+ * 野外 / 捕捉：对方只出 1 只；我方队伍里能战斗的都能轮换上场（最多 6 只，没有 6 只就按实际只数，不补）。
+ * 道馆 / 大会：按该馆（该场）的规矩。对战块没写 teamSize 时，先按事件、再按馆主兜底；都对不上才按对方阵容只数。
+ * 下表与卡内各“事件详情”条目、动画关都篇一致（n = 每方最多几只）。 */
+export const EVENT_FORMATS = {
+  EP005: { type: 'gym', n: 2, rule: '深灰道馆·小刚：双方最多各派两只' },
+  EP007: { type: 'gym', n: 2, rule: '华蓝道馆·小霞：双方各两只' },
+  EP014: { type: 'gym', n: 1, rule: '枯叶道馆·马志士：一对一单挑，中途不能换' },
+  EP022: { type: 'gym', n: 1, rule: '金黄道馆·娜姿：一对一' },
+  EP024: { type: 'gym', n: 1, rule: '金黄道馆·娜姿（再战）：一对一' },
+  EP026: { type: 'gym', n: 3, rule: '玉虹道馆·莉佳：三对三' },
+  EP032: { type: 'gym', n: 2, rule: '浅红道馆·阿桔：二对二' },
+  EP057: { type: 'gym', n: 3, rule: '红莲道馆·夏伯：三对三' },
+  EP058: { type: 'gym', n: 1, rule: '红莲道馆·夏伯（火山口重赛）：一对一' },
+  EP062: { type: 'gym', n: 3, rule: '常青道馆（火箭队代管）：各三只、不限时' },
+  EP076: { type: 'league', n: 3, rule: '石英大会预赛：各三只' },
+  EP077: { type: 'league', n: 3, rule: '石英大会预赛：各三只' },
+  EP078: { type: 'league', n: 3, rule: '石英大会预赛：各三只' },
+  EP080: { type: 'league', n: 3, rule: '石英大会第五轮：各三只' },
+};
+// 自由剧情 / 沙盒里的道馆战（对战块没写 teamSize、事件也对不上时，按对手名字认馆）
+export const GYM_RULES = [
+  { re: /小刚|武志|深灰/, n: 2, rule: '深灰道馆：双方最多各派两只' },
+  { re: /小霞|华蓝|樱花|菖蒲|牡丹/, n: 2, rule: '华蓝道馆：双方各两只' },
+  { re: /马志士|枯叶/, n: 1, rule: '枯叶道馆：一对一单挑' },
+  { re: /娜姿|金黄/, n: 1, rule: '金黄道馆：一对一' },
+  { re: /莉佳|玉虹/, n: 3, rule: '玉虹道馆：三对三' },
+  { re: /阿桔|绫女|浅红/, n: 2, rule: '浅红道馆：二对二' },
+  { re: /夏伯|红莲/, n: 3, rule: '红莲道馆：三对三' },
+  { re: /坂木|常青/, n: 3, rule: '常青道馆：各三只' },
+];
 // 人物名的常见写法 → records key（在场名单同步“已结识”用）
 export const NPC_ALIASES = {
   ash: ['小智', '阿智'], misty: ['小霞'], brock: ['小刚'], gary: ['小茂'], oak: ['大木博士', '大木'], jessie: ['武藏'], james: ['小次郎'],

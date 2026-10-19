@@ -11,6 +11,8 @@
   const EMBED = new URLSearchParams(location.search).has('embed');
   if (EMBED) document.documentElement.classList.add('embed');
   let dataReady = false, pendingHostConfig = null, hostTag = null, hostMode = false;
+  const APP_VERSION = '1.3.8';
+  let formatTag = '', formatRule = ''; // v1.3.8：角色卡发来的赛制（例：3v3、3只 vs 1只），显示在行动菜单的标签上
   // 宿主模式：球袋来自角色卡变量（MVU），只存在本页内存里，不读写本机存档。
   function memoryStorage() { const m = new Map(); return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: k => { m.delete(k); } }; }
   function useHostStore(balls) {
@@ -815,7 +817,8 @@
     $('command-title').textContent = animating ? '行动进行中…' : ended ? (battle.outcome === 'captured' ? '收服成功！' : '本场战斗已结束')
       : battle.pendingSwitch !== null ? '请选择下一只出战宝可梦' : ({home: `${displayPokemonName(battle.cur(0))}，要做什么？`, fight: `${displayPokemonName(battle.cur(0))} · 选择招式`, switch: '选择出战宝可梦', balls: '选择精灵球'}[view]);
     const isWild = battle.encounterType === 'wild';
-    $('encounter-tag').textContent = `${isWild ? '野生遭遇' : '训练家对战'} · 第 ${battle.turnCount + (ended ? 0 : 1)} 回合`;
+    $('encounter-tag').textContent = `${isWild ? '野生遭遇' : '训练家对战'}${formatTag ? ' · ' + formatTag : ''} · 第 ${battle.turnCount + (ended ? 0 : 1)} 回合`;
+    $('encounter-tag').title = formatRule || '';
     $('encounter-tag').classList.toggle('wild', isWild);
     $('command-back').hidden = view === 'home' || view === 'end' || battle.pendingSwitch !== null;
     $('command-back').disabled = animating;
@@ -1392,6 +1395,7 @@
     selectedMechanic = null;
     animating = false;
     let playerTeam, enemyTeam, difficulty = $('sel-diff').value, weather = null;
+    formatTag = cfg ? String(cfg.rules?.tag || '').slice(0, 24) : ''; formatRule = cfg ? String(cfg.rules?.rule || '').slice(0, 120) : '';
     if (cfg) {
       difficulty = cfg.difficulty || difficulty;
       if (cfg.encounter?.type === 'wild') $('sel-enemy').value = 'wild';
@@ -1675,7 +1679,7 @@
     dataReady = true;
     if (pendingHostConfig) { const cfg = pendingHostConfig; pendingHostConfig = null; startHostBattle(cfg); return; }
     if (q) { try { startBattle(JSON.parse(q)); return; } catch (_) {} }
-    if (EMBED) { $('log').textContent = '对战系统已就绪，正在等待角色卡发送对战配置……'; postHost('PKM_BATTLE_READY', { version: '1.3.7' }); return; }
+    if (EMBED) { $('log').textContent = '对战系统已就绪，正在等待角色卡发送对战配置……'; postHost('PKM_BATTLE_READY', { version: APP_VERSION }); return; }
     startBattle(null);
   }
 
@@ -1694,7 +1698,7 @@
     if (d.type === 'PKM_BATTLE_CONFIG' && d.payload) {
       if (!dataReady) { pendingHostConfig = d.payload; return; }
       startHostBattle(d.payload);
-    } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: '1.3.7' });
+    } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: APP_VERSION });
   });
 
   init().catch(e => { $('log').textContent = '数据加载失败：' + e.message + '\n（请通过网页服务打开本页，不要直接双击文件）'; });
