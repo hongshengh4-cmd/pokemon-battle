@@ -1414,6 +1414,11 @@
       };
       playerTeam = resolveSide(cfg.p1, 'player');
       enemyTeam = resolveSide(cfg.p2, $('sel-enemy').value);
+      const limit = (v, fallback) => Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 6 ? Number(v) : fallback;
+      const wild = cfg.encounter?.type === 'wild';
+      const size = limit(cfg.rules?.teamSize, 6);
+      playerTeam = playerTeam.slice(0, wild ? 6 : limit(cfg.rules?.playerLimit, size));
+      enemyTeam = enemyTeam.slice(0, wild ? 1 : limit(cfg.rules?.enemyLimit, size));
       if (!playerTeam.length || playerTeam.every(p => p.fainted)) throw new Error('我方没有能战斗的宝可梦。');
       if (!enemyTeam.length) throw new Error('对手没有宝可梦。');
       if (cfg.environment?.weather) weather = cfg.environment.weather === 'clear' ? null : cfg.environment.weather;
@@ -1627,7 +1632,7 @@
       fetch('./src/data/zh-names.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('./src/data/sprite-map.json?v=0.9.5').then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('./src/data/levelup.json?v=1.3.2').then(r => r.ok ? r.json() : {}).then(x => { LEVELUP = x || {}; }).catch(() => {}),
-      fetch('./src/data/move-desc-zh.json?v=1.3.6').then(r => r.ok ? r.json() : {}).then(x => { if (window.PKMMoveInfo) PKMMoveInfo.setDesc(x); }).catch(() => {}),
+      fetch('./src/data/move-desc-zh.json?v=1.3.7').then(r => r.ok ? r.json() : {}).then(x => { if (window.PKMMoveInfo) PKMMoveInfo.setDesc(x); }).catch(() => {}),
     ]);
     ZH = zh || {};
     SPRITES = spriteMap?.entries || {};
@@ -1670,7 +1675,7 @@
     dataReady = true;
     if (pendingHostConfig) { const cfg = pendingHostConfig; pendingHostConfig = null; startHostBattle(cfg); return; }
     if (q) { try { startBattle(JSON.parse(q)); return; } catch (_) {} }
-    if (EMBED) { $('log').textContent = '对战系统已就绪，正在等待角色卡发送对战配置……'; postHost('PKM_BATTLE_READY', { version: '1.3.6' }); return; }
+    if (EMBED) { $('log').textContent = '对战系统已就绪，正在等待角色卡发送对战配置……'; postHost('PKM_BATTLE_READY', { version: '1.3.7' }); return; }
     startBattle(null);
   }
 
@@ -1689,7 +1694,7 @@
     if (d.type === 'PKM_BATTLE_CONFIG' && d.payload) {
       if (!dataReady) { pendingHostConfig = d.payload; return; }
       startHostBattle(d.payload);
-    } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: '1.3.6' });
+    } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: '1.3.7' });
   });
 
   init().catch(e => { $('log').textContent = '数据加载失败：' + e.message + '\n（请通过网页服务打开本页，不要直接双击文件）'; });

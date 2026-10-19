@@ -1,14 +1,14 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.6
+// 宝可梦·关都之旅 · 外置桥接 v1.3.7
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.6');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.7');
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
 //       战斗结果写回 MVU 变量、生成前注入“剧情节点 + 变量摘要”、在场人物同步“已结识”。
-// v1.3.6 新增：① 精灵球可拖到屏幕任意位置（位置记在本机，面板/气泡跟着换边）；
+// v1.3.7 新增：① 精灵球可拖到屏幕任意位置（位置记在本机，面板/气泡跟着换边）；
 //       ② 叫声可换成自己的动画配音：放在 st-bridge/audio/cries/<id>.mp3，缺哪只自动退回原作叫声（见该目录 README）。
-import * as K from './kanto-data.js?v=1.3.6';
+import * as K from './kanto-data.js?v=1.3.7';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -204,7 +204,7 @@ function cryLines(name) {
 }
 const cryText = s => cryLines(s?.species || s?.name).slice(0, 2).map(x => `「${x}」`).join('');
 function cryId(name) { const id = speciesId(name); return id ? id.replace(/-/g, '') : ''; }
-// v1.3.6：叫声可换成自己的动画配音。
+// v1.3.7：叫声可换成自己的动画配音。
 //   自定义文件：<CRY_BASE><id>.mp3（id 与原作叫声同名：pikachu、mrmime、nidoranf……；备选版本 <id>_2.mp3、<id>_3.mp3 需配 manifest.json）
 //   来源三档（精灵球面板里切换）：auto 动画配音优先、缺的用原作叫声 ／ custom 只播动画配音（缺的不出声）／ game 只播原作叫声
 //   想把音频放在本机而不进公开仓库：浏览器控制台执行 localStorage.setItem('pkmKantoCryBase','/pkm-cries/')，文件放进酒馆的 public/pkm-cries/
@@ -213,6 +213,9 @@ const lsSet = (k, v) => { try { if (v == null) P.localStorage?.removeItem(k); el
 const CRY_BASE = String(lsGet('pkmKantoCryBase') || W.PKM_CRY_BASE || P.PKM_CRY_BASE || (BASE + 'st-bridge/audio/cries/')).replace(/\/?$/, '/');
 const CRY_MODES = ['auto', 'custom', 'game'];
 const cryMode = () => { const m = lsGet('pkmKantoCrySrc', 'auto'); return CRY_MODES.includes(m) ? m : 'auto'; };
+const monCryKey = s => s?.uid ? 'pkmKantoCryMon:' + s.uid : null;
+const monCryMode = s => { const key = monCryKey(s); const m = key && lsGet(key); return CRY_MODES.includes(m) ? m : cryMode(); };
+const cryChoices = m => [['inherit','跟随全局'],['auto','动漫配音（缺失用游戏）'],['game','游戏配音'],['custom','仅动漫（缺失静音）']].map(([v,n]) => `<option value="${v}"${v === m ? ' selected' : ''}>${n}</option>`).join('');
 const cryVol = () => { const v = Number(lsGet('pkmKantoCryVol', 70)); return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 70; };
 const cryMiss = new Set();  // 本次会话里已确认“没有自定义文件”的物种，不再重复探测
 const cryEls = new Map();   // url -> Audio（重复点击不用重新下载）
@@ -251,7 +254,7 @@ function playCustomCry(id, vol, onMiss) {
 function playCry(s) {
   const id = cryId(s?.species || s?.name); if (!id) return;
   if (lsGet('pkmKantoMute') === '1') return;
-  const mode = cryMode(), vol = cryVol(); if (!vol) return;
+  const mode = monCryMode(s), vol = cryVol(); if (!vol) return;
   stopCry();
   if (mode === 'game') { playGameCry(id, vol); return; }
   if (cryMiss.has(id)) { if (mode === 'auto') playGameCry(id, vol); return; }
@@ -1392,7 +1395,7 @@ function onDexClick(m, e) {
 /* ======================================================================
  * 9. 右下角精灵球：队伍 / 电脑 / 跟随
  * ==================================================================== */
-/* ---------- 精灵球自由拖拽（v1.3.6） ----------
+/* ---------- 精灵球自由拖拽（v1.3.7） ----------
  * 按住精灵球（或跟随的宝可梦）拖到屏幕任意位置；位置按“离最近两条边的距离”记在本机 localStorage，
  * 窗口缩放 / 旋转后自动收回屏内；面板和叫声气泡会跟着球所在的象限换边。点一下（没拖动）仍然是打开 / 关闭面板。 */
 const BALL_POS_KEY = 'pkmKantoBallPos', BALL_MARGIN = 6;
@@ -1527,7 +1530,7 @@ function renderPanel() {
   const pkm = readPkm();
   const party = pkm.party.slots.map((s, i) => ({ s, i })).filter(x => hasMon(x.s));
   const count = party.length;
-  const row = (s, where, i) => { const h = curHp(s); return `<div class="mon">${spriteImg(s.species || s.name, { shiny: s.shiny })}<div class="grow">${monLine(s, pkm)}<small class="mv">${(s.moves || []).filter(Boolean).map(m => { const t = ppText(s, m); const low = t && Number(t.split('/')[0]) <= Math.max(1, Math.floor(Number(t.split('/')[1]) / 4)); return `<span class="${low ? 'low' : ''}">${esc(m)}${t ? ` <i>${t}</i>` : ''}</span>`; }).join('') || '—'}</small><small>${h.max ? `HP ${h.hp}/${h.max}` : 'HP 满'} · ${esc(s.ability || '')}${s.nature ? ` · ${esc(natureZh(s.nature) || s.nature)}<span class="muted">（${natureNote(s.nature)}）</span>` : ''}${s.ball ? ' · ' + esc(s.ball) : ''}</small>${hpBar(s)}${statBlock(s)}${s.met ? `<small>${esc(s.met)}</small>` : ''}</div><div class="acts">
+  const row = (s, where, i) => { const h = curHp(s); return `<div class="mon">${spriteImg(s.species || s.name, { shiny: s.shiny })}<div class="grow">${monLine(s, pkm)}<small class="mv">${(s.moves || []).filter(Boolean).map(m => { const t = ppText(s, m); const low = t && Number(t.split('/')[0]) <= Math.max(1, Math.floor(Number(t.split('/')[1]) / 4)); return `<span class="${low ? 'low' : ''}">${esc(m)}${t ? ` <i>${t}</i>` : ''}</span>`; }).join('') || '—'}</small><small>${h.max ? `HP ${h.hp}/${h.max}` : 'HP 满'} · ${esc(s.ability || '')}${s.nature ? ` · ${esc(natureZh(s.nature) || s.nature)}<span class="muted">（${natureNote(s.nature)}）</span>` : ''}${s.ball ? ' · ' + esc(s.ball) : ''}</small>${hpBar(s)}${statBlock(s)}${s.met ? `<small>${esc(s.met)}</small>` : ''}</div><div class="acts"><label>单只叫声 <select data-op="mon-src" data-i="${i}" data-w="${where}">${cryChoices((monCryKey(s) && lsGet(monCryKey(s))) || 'inherit')}</select></label>
     ${where === 'party' ? `${s.isLead ? '' : `<button data-op="lead" data-i="${i}">设为首发</button>`}<button data-op="follow" data-i="${i}" data-w="party">${s.uid && s.uid === pkm.party.follow ? '收回球里' : '出球跟随'}</button>${count > 1 ? `<button data-op="tobox" data-i="${i}">存进电脑</button>` : ''}`
     : `<button data-op="toparty" data-i="${i}" ${count >= 6 ? 'disabled title="队伍已满 6 只"' : ''}>加入队伍</button><button data-op="follow" data-i="${i}" data-w="box">${s.uid && s.uid === pkm.party.follow ? '收回' : '跟随'}</button>`}</div></div>`; };
   let muted = false; try { muted = P.localStorage?.getItem('pkmKantoMute') === '1'; } catch (_) {}
@@ -1536,14 +1539,20 @@ function renderPanel() {
     <div class="tabs"><button class="${panelTab === 'party' ? 'on' : ''}" data-tab="party">队伍 ${count}/6</button><button class="${panelTab === 'box' ? 'on' : ''}" data-tab="box">电脑 ${pkm.party.box.length}</button></div>
     <div class="bd">${panelTab === 'party' ? (party.length ? party.map(x => row(x.s, 'party', x.i)).join('') : '<div class="empty">还没有宝可梦。先在开局界面领取初始伙伴。</div>')
       : (pkm.party.box.length ? pkm.party.box.map((s, i) => row(s, 'box', i)).join('') : '<div class="empty">电脑里没有寄存的宝可梦。队伍满 6 只后收服的会传送到这里。</div>')}
-    <div class="pk-snd"><span>叫声</span><input type="range" min="0" max="100" step="5" value="${cvol}" data-op="vol" title="叫声音量"><select data-op="src" title="叫声来源（动画配音文件放在 st-bridge/audio/cries/）"><option value="auto"${csrc === 'auto' ? ' selected' : ''}>动画配音优先</option><option value="custom"${csrc === 'custom' ? ' selected' : ''}>仅动画配音</option><option value="game"${csrc === 'game' ? ' selected' : ''}>仅原作叫声</option></select></div>
-    <div class="pk-note">换首发、跟随、存取电脑会直接写入变量（下一条回复生效）。剧情里的治疗、升级、进化由 AI 按规则写入。球可以拖到屏幕任意位置，📍 放回右下角。</div></div>`;
+    <div class="pk-snd"><span>叫声</span><input type="range" min="0" max="100" step="5" value="${cvol}" data-op="vol" title="叫声音量"><select data-op="src" title="叫声来源（动画配音文件放在 st-bridge/audio/cries/）"><option value="auto"${csrc === 'auto' ? ' selected' : ''}>全局：动漫配音（缺失用游戏）</option><option value="custom"${csrc === 'custom' ? ' selected' : ''}>仅动画配音</option><option value="game"${csrc === 'game' ? ' selected' : ''}>全局：游戏配音</option></select></div>
+    <div class="pk-note">动漫音频暂未随包提供，请自行添加有权使用的音频；缺失时按所选模式回退游戏或静音。全局选择作为默认，单只选择可覆盖；设为“跟随全局”可取消覆盖。设置保存在当前浏览器。<br>换首发、跟随、存取电脑会直接写入变量（下一条回复生效）。剧情里的治疗、升级、进化由 AI 按规则写入。球可以拖到屏幕任意位置，📍 放回右下角。</div></div>`;
   placePanel();
 }
 // 叫声音量 / 来源：拖动滑块实时记下，松手或切换来源后用跟随（或首发）的宝可梦试听一声
 function onPanelInput(e) { if (e.target?.dataset?.op === 'vol') lsSet('pkmKantoCryVol', e.target.value); }
 function onPanelChange(e) {
   const t = e.target, op = t?.dataset?.op;
+  if (op === 'mon-src') {
+    const p = readPkm(), s = (t.dataset.w === 'box' ? p.party.box : p.party.slots)[Number(t.dataset.i)];
+    const key = monCryKey(s); if (!key) { toast('宝可梦标识尚未就绪，请重新打开面板'); return; }
+    lsSet(key, CRY_MODES.includes(t.value) ? t.value : null);
+    playCry(s); cryBubble(s); return;
+  }
   if (op === 'vol') lsSet('pkmKantoCryVol', t.value);
   else if (op === 'src') lsSet('pkmKantoCrySrc', CRY_MODES.includes(t.value) ? t.value : 'auto');
   else return;
@@ -1631,7 +1640,11 @@ function engineConfig(spec, pkm, tag) {
   const cfg = spec.cfg || {};
   const type = String(cfg.type || 'trainer').toLowerCase();
   let team = Array.isArray(cfg.team) ? cfg.team : [];
-  if (type === 'wild') team = team.slice(0, 1);
+  // 单打：名额是整场可用阵容大小，不是同时上场数。
+  const rawSize = Number(cfg.teamSize ?? cfg.rules?.teamSize);
+  const teamSize = Number.isInteger(rawSize) && rawSize >= 1 && rawSize <= 6 ? rawSize
+    : type === 'gym' ? Math.max(1, Math.min(6, team.length)) : 6;
+  team = team.slice(0, type === 'wild' ? 1 : teamSize);
   // v1.3.4：对手 / 野生宝可梦也有个体值和性格（按这场对战的 key 固定，重开同一场不会变；收服后沿用）
   const band = ['gym', 'rival', 'boss', 'league'].includes(type) ? 'high' : null;
   const enemy = team.map((t, i) => {
@@ -1643,8 +1656,8 @@ function engineConfig(spec, pkm, tag) {
     return e;
   });
   const balls = Object.fromEntries(Object.entries(K.BALL_ZH).map(([id, zh]) => [id, Math.max(0, Math.floor(Number(pkm.player.bag[zh]) || 0))]));
-  const out = { encounter: { type: type === 'wild' ? 'wild' : 'trainer' }, difficulty: cfg.difficulty || K.DIFFICULTY_BY_TYPE[type] || 'normal',
-    p1: { entrants: [{ name: 'host-player', party: playerEntries(pkm) }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
+  const out = { rules: { teamSize, playerLimit: type === 'wild' ? 6 : teamSize, enemyLimit: type === 'wild' ? 1 : teamSize }, encounter: { type: type === 'wild' ? 'wild' : 'trainer' }, difficulty: cfg.difficulty || K.DIFFICULTY_BY_TYPE[type] || 'normal',
+    p1: { entrants: [{ name: 'host-player', party: playerEntries(pkm).slice(0, type === 'wild' ? 6 : teamSize) }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
     host: { tag, balls }, ui: spec.ui || null };
   const w = K.WEATHER[String(cfg.environment || '').trim()];
   if (w) out.environment = { weather: w, weatherTurns: 0 };
@@ -1664,8 +1677,9 @@ function openBattle(spec) {
   }
   ensureHostStyle();
   const el = PD.createElement('div'); el.id = 'pkm-kanto-modal'; el.className = 'pkb';
+  const formatLabel = type === 'wild' ? '最多6只轮换 vs 1只' : `${engine.rules.teamSize}v${engine.rules.teamSize} · 我方${engine.p1.entrants[0].party.length}只/对方${engine.p2.entrants[0].party.length}只` ;
   const title = cfg.title || `${K.TYPE_LABEL[type] || '对战'}${cfg.opponent ? ' · ' + cfg.opponent : ''}`;
-  el.innerHTML = `<div class="bar"><span class="t">⚔️ ${esc(title)}</span><span class="s">${esc(cfg.lines?.start ? '「' + cfg.lines.start + '」' : '正在连接对战系统……')}</span><button class="red" data-op="close">返回剧情</button></div>
+  el.innerHTML = `<div class="bar"><span class="t">⚔️ ${esc(title)} · ${esc(formatLabel)}</span><span class="s">${esc(cfg.lines?.start ? '「' + cfg.lines.start + '」' : '正在连接对战系统……')}</span><button class="red" data-op="close">返回剧情</button></div>
     <iframe allow="autoplay" referrerpolicy="no-referrer-when-downgrade" src="${esc(BASE)}index.html?embed=1&v=${VERSION}&t=${Date.now().toString(36)}"></iframe>`;
   PD.body.appendChild(el);
   modal = { el, frame: el.querySelector('iframe'), tag, key: spec.key, spec, cfg, engine, balls, type, sent: false, done: false, sess, timer: null };
