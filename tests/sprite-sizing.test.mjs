@@ -16,7 +16,7 @@ test('Mega can use its own dex height',()=>assert.ok(p('venusaurmega').height>p(
 test('Unknown species uses normal safe size',()=>near(p('unknown').ratio,1));
 test('Missing or invalid height uses normal safe size',()=>{for(const heightm of [undefined,0,-2,'bad'])near(profile({x:{heightm}},'x').ratio,1);});
 test('Dynamax Pikachu becomes larger than ordinary Pikachu',()=>assert.ok(profile(dex,'pikachu',{dynamaxed:true}).ratio>p('pikachu').ratio*1.8));
-test('Gmax uses base height, then the giant presentation floor',()=>{const a=profile(dex,'pikachugmax',{originalSpeciesId:'pikachu',dynamaxed:true});near(a.height,.4);near(a.ratio,.98);});
+test('Gmax uses base height, then the giant presentation floor',()=>{const a=profile(dex,'pikachugmax',{originalSpeciesId:'pikachu',dynamaxed:true});near(a.height,.4);near(a.ratio,1.05);});
 test('All 1518 dex profiles return finite bounded sizes',()=>{for(const id of Object.keys(dex)){const a=p(id);assert.ok(Number.isFinite(a.ratio)&&a.ratio>=.4&&a.ratio<=1.06,id);}});
 const geometry={imageLeft:90,imageTop:80,width:160,height:160,naturalWidth:100,naturalHeight:100,boxWidth:345,boxHeight:320,feet:.9,feetX:.6};
 test('Feet reach the shared floor after reducing layout size',()=>{const g=ground(geometry);near(geometry.imageTop+144+g.translateY,293);near(g.originY,90);});
@@ -26,4 +26,6 @@ test('Small sprite casts smaller shadow',()=>{const a=ground(geometry),b=ground(
 test('Shadow stays within stage width for very large shapes',()=>assert.ok(ground({...geometry,width:1000,height:1000}).shadowWidth<=345*.92));
 test('Zero and invalid geometry cannot produce NaN styles',()=>{assert.equal(ground({...geometry,naturalWidth:0}),null);assert.equal(ground({...geometry,width:NaN}),null);});
 test('Scaling about the measured foot pivot preserves the floor',()=>{const g=ground(geometry);const pivot=g.originY/100*geometry.height;for(const scale of [1,1.07,1.18])near(geometry.imageTop+g.translateY+pivot+(144-pivot)*scale,293);});
+test('Dynamax Charizard has a larger layout than normal; Gmax adds a further size step',()=>{const n=profile(dex,'charizard'),d=profile(dex,'charizard',{dynamaxed:true}),g=profile(dex,'charizardgmax',{originalSpeciesId:'charizard',dynamaxed:true,dynamaxForm:'gmax'});assert.ok(d.ratio>n.ratio);assert.ok(g.ratio>d.ratio);});
+test('Giant shadow can exceed the normal sprite box and thirty-pixel height cap',()=>{const a=ground({...geometry,width:500,height:500,permanentScale:1.4,giantShadow:true,shadowMaxWidth:900,shadowMaxHeight:92});assert.ok(a.shadowWidth>geometry.boxWidth*.92);assert.ok(a.shadowHeight>30);});
 console.log(`Sprite size tests: ${count}/${count} passed.`);

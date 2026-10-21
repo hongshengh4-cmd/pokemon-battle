@@ -2,6 +2,7 @@
 """逐张下载 sprite-map.json 里的精灵图，测量“脚底位置”（不透明像素最底行占画布高度的比例），
 把 frontFeet / backFeet 写回每条 entries。运行时据此把精灵的脚对齐到地面阴影。
 用法：在项目根目录执行 python3 tools/measure-sprites.py（下载结果缓存于 /tmp/sprite-measure，可重复执行）。"""
+from pathlib import Path
 import hashlib
 import json
 import os
@@ -21,6 +22,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 def measure(url):
     name = hashlib.md5(url.encode()).hexdigest() + ('.gif' if url.endswith('.gif') else '.png')
     path = os.path.join(CACHE_DIR, name)
+    if url.startswith('./'): path = str(Path(__file__).resolve().parents[1] / url[2:])
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         last = None
         for _ in range(3):

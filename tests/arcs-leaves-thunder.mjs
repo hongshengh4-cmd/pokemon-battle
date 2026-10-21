@@ -1,0 +1,37 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+const browser=await chromium.launch({args:['--no-sandbox']});
+const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+await page.goto('http://127.0.0.1:8000/preview.html');
+await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('实时'));
+const f=page.frames().find(f=>f.url().includes('fxpreview'));
+await page.locator('#terrain button[data-value="grassy"]').click();
+await page.waitForTimeout(2000);
+await page.screenshot({path:'/home/user/交付-v1.3.15/预览-风吹草叶与阴雨.png',fullPage:true});
+await page.locator('#thunder').click();
+await page.waitForTimeout(400);
+assert.equal(await f.locator('.field-fx-weather').getAttribute('data-thunder'),'active');
+await page.screenshot({path:'/home/user/交付-v1.3.15/预览-偶发雷光.png',fullPage:true});
+await page.waitForTimeout(1000);
+assert.equal(await f.locator('.field-fx-weather').getAttribute('data-thunder'),'quiet');
+await page.locator('#weather button[data-value="sand"]').click();
+assert.ok(await page.locator('#thunder').isDisabled());
+await page.screenshot({path:'/home/user/交付-v1.3.15/预览-柔和沙尘滤镜.png',fullPage:true});
+await page.locator('#terrain button[data-value="electric"]').click();
+let active=0,quiet=0;
+for(let i=0;i<120;i++){
+ const n=Number(await f.locator('.field-fx-terrain').getAttribute('data-arcs'));
+ if(n>0)active++;else quiet++;
+ await page.waitForTimeout(100);
+}
+assert.ok(active>0&&quiet>active,'arcs are intermittent, quiet most of the time');
+await page.emulateMedia({reducedMotion:'reduce'});
+await page.locator('#weather button[data-value="rain"]').click();
+await page.locator('#thunder').click();
+await page.waitForTimeout(200);
+assert.equal(await f.locator('.field-fx-weather').getAttribute('data-thunder'),'quiet');
+assert.equal(await f.locator('.field-fx-terrain').getAttribute('data-arcs'),'0');
+assert.deepEqual(errors,[]);
+console.log(`PASS wind leaves, manual thunder and quiet recovery, sand filter preview, intermittent arcs (${active} active / ${quiet} quiet samples), reduced-motion suppression, no JS errors.`);
+await browser.close();

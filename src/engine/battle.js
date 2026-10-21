@@ -1090,7 +1090,7 @@
       }
       for (const side of [0, 1]) { const p = this.cur(side); if (p?.volatile.disableTurns > 0 && --p.volatile.disableTurns === 0) delete p.volatile.disableMove; }
       // Field duration ticks.
-      if (this.field.terrain && --this.field.terrainTurns <= 0) { this.field.terrain = null; this.field.terrainTurns = 0; this.say('场地恢复了正常。'); }
+      if (this.field.terrain && this.field.terrainTurns > 0 && --this.field.terrainTurns === 0) { this.field.terrain = null; this.field.terrainTurns = 0; this.say('场地恢复了正常。'); }
       if (this.field.trickRoom > 0 && --this.field.trickRoom === 0) this.say('扭曲的空间恢复了正常。');
       if (this.field.gravity > 0) this.field.gravity--;
       for (const sc of this.field.sides) {

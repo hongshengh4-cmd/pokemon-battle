@@ -1,9 +1,73 @@
 {
   "_comment": "Hand-checked mouth anchors (fractions of the animated GIF canvas: [x, y]) for species where the automatic head detection is unreliable (wings / arms in front of the head). They override tools/measure-mouth-anchors.py results.",
-  "charizard": {"front": [0.22, 0.54], "back": [0.94, 0.50]},
-  "charizardmegax": {"front": [0.31, 0.44], "back": [0.86, 0.37]},
-  "charizardmegay": {"front": [0.39, 0.37], "back": [0.79, 0.50]},
-  "blastoise": {"front": [0.27, 0.21], "back": [0.82, 0.20]},
-  "garchomp": {"front": [0.35, 0.24], "back": [0.70, 0.26]},
-  "lucario": {"front": [0.35, 0.28], "back": [0.81, 0.25]}
+  "charizard": {
+    "front": [
+      0.22,
+      0.54
+    ],
+    "back": [
+      0.94,
+      0.5
+    ]
+  },
+  "charizardmegax": {
+    "front": [
+      0.31,
+      0.44
+    ],
+    "back": [
+      0.86,
+      0.37
+    ]
+  },
+  "charizardmegay": {
+    "front": [
+      0.39,
+      0.37
+    ],
+    "back": [
+      0.79,
+      0.5
+    ]
+  },
+  "blastoise": {
+    "front": [
+      0.27,
+      0.21
+    ],
+    "back": [
+      0.82,
+      0.2
+    ]
+  },
+  "garchomp": {
+    "front": [
+      0.35,
+      0.24
+    ],
+    "back": [
+      0.7,
+      0.26
+    ]
+  },
+  "lucario": {
+    "front": [
+      0.35,
+      0.28
+    ],
+    "back": [
+      0.81,
+      0.25
+    ]
+  },
+  "cinderacegmax": {
+    "front": [
+      0.33,
+      0.12
+    ],
+    "back": [
+      0.67,
+      0.12
+    ]
+  }
 }

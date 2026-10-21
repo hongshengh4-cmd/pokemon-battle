@@ -6,12 +6,12 @@
   let battle = null, moveCache = {}, selectedMechanic = null, animating = false;
   let menuView = 'home', commandMessage = '', encounterId = '', collectionLimit = 48, announcedBattle = null;
   let worldStorage = null; try { worldStorage = window.localStorage; } catch (_) {}
-  let worldStore = new PKMWorldSave.Store(worldStorage);
+  let worldStore = new PKMWorldSave.Store(new URLSearchParams(location.search).has('fxpreview') ? memoryStorage() : worldStorage);
   // v1.3.2: 外置桥接（SillyTavern 角色卡）嵌入模式：?embed=1
   const EMBED = new URLSearchParams(location.search).has('embed');
   if (EMBED) document.documentElement.classList.add('embed');
   let dataReady = false, pendingHostConfig = null, hostTag = null, hostMode = false;
-  const APP_VERSION = '1.3.9';
+  const APP_VERSION = '1.3.20';
   let formatTag = '', formatRule = ''; // v1.3.8：角色卡发来的赛制（例：3v3、3只 vs 1只），显示在行动菜单的标签上
   let typeLabel = ''; // v1.3.9：角色卡发来的对战类型（道馆战 / 训练家对战 / 劲敌对战 / 火箭队……），标签第一段
   // 宿主模式：球袋来自角色卡变量（MVU），只存在本页内存里，不读写本机存档。
@@ -140,7 +140,7 @@
   function applySpriteSize(img, p) {
     if (!img || !p) return;
     img._spriteState = { speciesId: normId(p.speciesId), originalSpeciesId: normId(p.originalSpeciesId || p.speciesId),
-      dynamaxed: !!p.dynamaxed, isMega: !!p.isMega };
+      dynamaxed: !!p.dynamaxed, dynamaxForm:p.dynamaxForm || '', isMega: !!p.isMega };
     const profile = PKMSpriteSizing.profile(PKMBattle._dex, img._spriteState.speciesId, img._spriteState);
     img.style.setProperty('--body-ratio', String(profile.ratio));
     img.dataset.species = img._spriteState.speciesId;
@@ -157,21 +157,40 @@
     const feet = SPRITE_FEET[url] ?? mapped?.[back ? 'backFeet' : 'frontFeet'] ?? .94;
     const feetX = SPRITE_FEETX[url] ?? mapped?.[back ? 'backFeetX' : 'frontFeetX'] ?? .5;
     const style = getComputedStyle(img);
-    const geometry = PKMSpriteSizing.ground({
+    const inputs = {
       imageLeft: img.offsetLeft, imageTop: img.offsetTop,
       width: img.clientWidth, height: img.clientHeight,
       naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight,
       boxWidth: box.clientWidth, boxHeight: box.clientHeight,
       feet, feetX, flip: parseFloat(style.getPropertyValue('--flip')) < 0,
-      permanentScale: parseFloat(style.getPropertyValue('--sprite-scale')) || 1,
-    });
+      permanentScale: 1,
+    };
+    let geometry = PKMSpriteSizing.ground(inputs);
     if (!geometry) return;
-    img.style.translate = `0px ${geometry.translateY.toFixed(2)}px`;
+    const giant=!!img._spriteState?.dynamaxed;
+    let permanentScale=giant?(img._spriteState.dynamaxForm==='gmax'?1.55:1.4):(img._spriteState?.isMega?1.07:1),shiftX=0,shiftY=0;
+    const arena=box.closest('.arena');
+    if(giant&&arena){
+      const ar=arena.getBoundingClientRect(),br=box.getBoundingClientRect(),pivot=geometry.originY/100*img.clientHeight;
+      const floor=br.top-ar.top+box.clientHeight-27,below=img.clientHeight-pivot;
+      permanentScale=Math.min(permanentScale,(ar.height-36)/img.clientHeight,(ar.width-28)/img.clientWidth);
+      const safeFloor=Math.max(pivot*permanentScale+18,Math.min(ar.height-below*permanentScale-18,floor));
+      shiftY=safeFloor-floor;
+      const half=img.clientWidth*permanentScale*.5,center=br.left-ar.left+img.offsetLeft+img.clientWidth*.5;
+      shiftX=Math.max(half+14,Math.min(ar.width-half-14,center))-center;
+    }
+    img.style.setProperty('--sprite-scale',String(permanentScale));
+    geometry=PKMSpriteSizing.ground({...inputs,permanentScale,giantShadow:giant,shadowMaxWidth:giant&&arena?arena.clientWidth*.88:undefined,shadowMaxHeight:giant?92:undefined});
+    img.style.translate = `${shiftX.toFixed(2)}px ${(geometry.translateY+shiftY).toFixed(2)}px`;
     // Mega/Dynamax scale around the actual floor point rather than the GIF edge.
     img.style.transformOrigin = `50% ${geometry.originY}%`;
-    box.style.setProperty('--shadow-x', `${geometry.shadowX.toFixed(2)}px`);
+    box.style.setProperty('--ground-shift',`${shiftY.toFixed(2)}px`);
+    box.style.setProperty('--shadow-x', `${(geometry.shadowX+shiftX).toFixed(2)}px`);
     box.style.setProperty('--shadow-width', `${geometry.shadowWidth.toFixed(2)}px`);
     box.style.setProperty('--shadow-height', `${geometry.shadowHeight.toFixed(2)}px`);
+    box.style.setProperty('--aura-width', `${Math.min(box.clientWidth*1.3,img.clientWidth*1.15).toFixed(2)}px`);
+    box.style.setProperty('--aura-height', `${(img.clientHeight*permanentScale*1.05).toFixed(2)}px`);
+    box.style.setProperty('--giant-height',`${(img.clientHeight*permanentScale*.92).toFixed(2)}px`);
   }
   const spriteResizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => {
     for (const entry of entries) {
@@ -180,11 +199,17 @@
     }
   });
   function setSprite(el, p, back) {
+    // HP/menu redraws must not destroy and reload the animated GIF every time.
+    const visualKey = JSON.stringify([p.speciesId, p.originalSpeciesId, !!back, !!p.dynamaxed,
+      p.dynamaxForm, !!p.isMega, !!p.terastallized, p.teraType]);
+    if (el.dataset.visualKey === visualKey && el.querySelector(':scope > img')) return;
+    el.dataset.visualKey = visualKey;
     const previousImg = el.querySelector(':scope > img');
     if (previousImg) spriteResizeObserver?.unobserve(previousImg);
     el.innerHTML = '';
     el.classList.toggle('is-mega', !!p.isMega);
     el.classList.toggle('is-dynamax', !!p.dynamaxed);
+    el.classList.toggle('is-gmax', !!p.dynamaxed && p.dynamaxForm === 'gmax');
     const mapped = SPRITES[normId(p.speciesId)] || null;
     const mappedUrl = mapped ? (back ? mapped.back : mapped.front) : null;
     let attempts = spriteAttempts(p, back);
@@ -194,8 +219,9 @@
     img.alt = displayPokemonName(p);
     img.onload = () => {
       const url = img.currentSrc || img.src || attempts[idx] || '';
+      const isMapped = !!mappedUrl && new URL(mappedUrl, document.baseURI).href === url;
       let flip = 1;
-      if (back && ((url === mappedUrl && mapped?.backFallback === 'front') || /\/sprites\/(ani|gen5)\//.test(url))) flip = -1;
+      if (back && ((isMapped && mapped?.backFallback === 'front') || /\/sprites\/(ani|gen5)\//.test(url))) flip = -1;
       if (!back && /\/sprites\/(ani-back|gen5-back)\//.test(url)) flip = -1;
       img.style.setProperty('--flip', String(flip));
       groundAlign(img, url);
@@ -215,6 +241,7 @@
     if (p.dynamaxed) img.classList.add('state-dynamax');
     if (p.terastallized) { img.classList.add('state-tera'); img.style.setProperty('--mech', FX_TYPE_COLORS[p.teraType] || '#67e8f9'); }
     if (p.dynamaxed) {
+      const aura=document.createElement('span');aura.className='dynamax-aura';aura.setAttribute('aria-hidden','true');el.prepend(aura);
       const clouds = document.createElement('span');
       clouds.className = 'dynamax-clouds' + (p.dynamaxForm === 'gmax' ? ' gmax' : '');
       clouds.setAttribute('aria-hidden', 'true');
@@ -241,7 +268,7 @@
   }
   function snapshotBattle() {
     if (!battle) return null;
-    return { active: battle.active.slice(), winner: battle.winner, teams: battle.teams.map(team => team.map(snapPokemon)) };
+    return { weather: battle.weather, field: { ...battle.field }, active: battle.active.slice(), winner: battle.winner, teams: battle.teams.map(team => team.map(snapPokemon)) };
   }
   const spriteEl = side => $(side === 0 ? 'p-sprite' : 'e-sprite');
   function addClassTemp(el, className, ttl = 900) {
@@ -397,10 +424,12 @@
       await waitMs(760);
       img.classList.remove('evo-finish');
     } else if (kind === 'dynamax') {
-      applySpriteSize(img, { ...img._spriteState, dynamaxed: true });
+      applySpriteSize(img, { ...img._spriteState, dynamaxed: true, dynamaxForm:opts.gmax?'gmax':'' });
+      box.classList.toggle('is-gmax',!!opts.gmax);
       box.classList.add('is-dynamax');
       groundAlign(img, img.currentSrc || img.src);
       img.classList.add('dynamax-burst');
+      if(opts.gmax){addClassTemp(box,'gmax-arrival',1400);addFx(side,'gmax-groundwave','',1200);}
       showMechanicIcon(side, opts.gmax ? 'gmax' : 'dynamax', 950);
       setTimeout(() => showBanner(...TRANSFORM_BANNERS[opts.gmax ? 'gmax' : 'dynamax']), 200);
       if (opts.newUrl) {
@@ -409,6 +438,7 @@
         if (opts.prefix && opts.readyName) $(opts.prefix + '-name').textContent = opts.readyName;
         await waitMs(340);
       } else await waitMs(840);
+      if(opts.gmax)await waitMs(300);
       img.classList.remove('dynamax-burst');
     } else if (kind === 'tera') {
       img.style.setProperty('--mech', FX_TYPE_COLORS[opts.teraType] || '#67e8f9');
@@ -684,6 +714,16 @@
     const afterActive = side => afterSnap.teams[side]?.[afterSnap.active[side]];
     let delay = 40;
     // 变身處理：先在第一幀繪製前把精靈切回舊形態剪影，避免新形態先閃現出來
+    // The engine resolves end-of-turn expiry before animation playback. Keep the
+    // previous giant form through its final attack; restore only after all FX.
+    const expiringGiants = [];
+    for (const side of [0, 1]) {
+      const b = beforeActive(side), a = afterActive(side);
+      if (b?.dynamaxed && a && !a.dynamaxed && before.active[side] === afterSnap.active[side]) {
+        setSprite(spriteEl(side), b, side === 0);
+        expiringGiants.push({side, a, b});
+      }
+    }
     const transforms = {};
     for (const side of [0, 1]) {
       const afterIdx = afterSnap.active[side];
@@ -694,7 +734,7 @@
       else if (a.dynamaxed && !b.dynamaxed) kind = 'dynamax';
       else if (a.terastallized && !b.terastallized) kind = 'tera';
       if (!kind) {
-        if (!a.dynamaxed && b.dynamaxed) setTimeout(() => animateImg(side, 'fx-shrink', 700), delay);
+        // Expiry is deferred until the attack and hit animations have finished.
         continue;
       }
       if (side === 0 && chosen?.preAnimated) continue;
@@ -715,7 +755,7 @@
       if (t) {
         const at = delay, prefix = side === 0 ? 'p' : 'e';
         if (t.kind === 'mega') { setTimeout(() => runTransformPhases(side, 'mega', { newUrl: t.newUrl, nextSprite: t.a, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 1500; }
-        else if (t.kind === 'dynamax') { setTimeout(() => runTransformPhases(side, 'dynamax', { gmax: t.a.dynamaxForm === 'gmax', newUrl: t.newUrl, nextSprite: t.a, prefix, readyName: t.a.nameText || t.a.name }), at); delay += 980; }
+        else if (t.kind === 'dynamax') { setTimeout(() => runTransformPhases(side, 'dynamax', { gmax: t.a.dynamaxForm === 'gmax', newUrl: t.newUrl, nextSprite: t.a, prefix, readyName: t.a.nameText || t.a.name }), at); delay += t.a.dynamaxForm==='gmax'?1280:980; }
         else if (t.kind === 'tera') { setTimeout(() => runTransformPhases(side, 'tera', { teraType: t.a.teraType }), at); delay += 980; }
       }
       if (before.active[side] !== afterSnap.active[side]) {
@@ -788,7 +828,20 @@
         if (a.status && a.status !== b.status) addFx(side, 'fx-status', PKMBattle.STATUS_NAMES[a.status] || '异常', 1200);
       }
     }, delay + 260);
-    return delay + 1560;
+    if (expiringGiants.length) {
+      setTimeout(() => {
+        for (const {side, a, b} of expiringGiants) {
+          const oldImg=spriteEl(side).querySelector('img');
+          const oldSize = oldImg ? oldImg.clientWidth*(parseFloat(getComputedStyle(oldImg).scale)||1) : 1;
+          const nextProfile = PKMSpriteSizing.profile(PKMBattle._dex, a.speciesId, a);
+          const nextSize = (oldImg?.clientWidth||1)/PKMSpriteSizing.profile(PKMBattle._dex,b.speciesId,b).ratio*nextProfile.ratio*(a.isMega?1.07:1);
+          setSprite(spriteEl(side), a, side === 0);
+          spriteEl(side).querySelector('img')?.style.setProperty('--shrink-from', String(oldSize / nextSize));
+          animateImg(side, 'fx-shrink', 700);
+        }
+      }, delay + 1300);
+    }
+    return delay + (expiringGiants.length ? 2160 : 1560);
   }
 
   /* ---------- Action hierarchy / prototype world save ---------- */
@@ -1084,6 +1137,7 @@
       });
     };
     teamRow(0, $('p-team')); teamRow(1, $('e-team'));
+    PKMFieldFX.sync(document.querySelector('.arena'), battle);
     const fieldParts = [];
     const weatherNames = { sun: '☀️ 大晴天', rain: '🌧️ 下雨', sand: '🌪️ 沙暴', snow: '❄️ 下雪' };
     const terrainNames = { electric: '⚡ 电气场地', grassy: '🌿 青草场地', misty: '🌫️ 薄雾场地', psychic: '🔮 精神场地' };
@@ -1272,6 +1326,12 @@
       battle.turn(a);
       selectedMechanic = null; menuView = panelForAction(a); // stay on the move list while the turn plays out
       after();
+      for (const side of [0, 1]) {
+        const old = before.teams[side]?.[before.active[side]], current = battle.cur(side);
+        if (old?.dynamaxed && current && !current.dynamaxed && before.active[side] === battle.active[side]) {
+          setSprite(spriteEl(side), old, side === 0);
+        }
+      }
       requestAnimationFrame(() => unlockAfterAnimations(before, chosen, logStart));
     };
     // 玩家变身：先在当前精灵上播完变身动画，再结算回合（顺序与参考卡一致）
@@ -1427,11 +1487,13 @@
       enemyTeam = enemyTeam.slice(0, wild ? 1 : limit(cfg.rules?.enemyLimit, size));
       if (!playerTeam.length || playerTeam.every(p => p.fainted)) throw new Error('我方没有能战斗的宝可梦。');
       if (!enemyTeam.length) throw new Error('对手没有宝可梦。');
-      if (cfg.environment?.weather) weather = cfg.environment.weather === 'clear' ? null : cfg.environment.weather;
-      if (cfg.environment?.weatherTurns) var wt = cfg.environment.weatherTurns;
+      const environment = PKMFieldFX.environment(cfg.environment);
+      weather = environment.weather || null;
+      const wt = environment.weatherTurns;
       if (cfg.encounter?.type === 'wild' && enemyTeam.length !== 1) throw new Error('当前野生遭遇仅支持一只野生宝可梦。');
       battle = new PKMBattle.Battle(playerTeam, enemyTeam, { difficulty, weather, weatherTurns: typeof wt !== 'undefined' ? wt : 0,
         encounterType: cfg.encounter?.type, balls: worldStore.state.balls, seed: cfg.seed });
+      if (environment.terrain) battle.setTerrain(environment.terrain, environment.terrainTurns);
       if (cfg.ui?.openBalls && battle.encounterType === 'wild') menuView = 'balls';
       // v1.3.9：战斗记录第一行写明这场的类型和赛制（角色卡发来的）
       if (cfg.host?.intro) battle.log.unshift(String(cfg.host.intro).slice(0, 200));
@@ -1452,7 +1514,7 @@
     const sideEl = $('e-side-label');
     if (sideEl) sideEl.textContent = String((cfg && cfg.rules?.sideLabel) || (battle.encounterType === 'wild' ? '野生' : '敌方')).slice(0, 6);
     after();
-    requestAnimationFrame(() => { playSendOut(1); setTimeout(() => playSendOut(0), 150); });
+    if (!window.PKMPreview) requestAnimationFrame(() => { playSendOut(1); setTimeout(() => playSendOut(0), 150); });
   }
 
 
@@ -1641,7 +1703,7 @@
       fetch('./src/data/moves.json?v=0.9.0').then(r => r.json()),
       fetch('./src/data/learnsets.json?v=0.9.0').then(r => r.json()),
       fetch('./src/data/zh-names.json?v=0.9.0').then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('./src/data/sprite-map.json?v=0.9.5').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('./src/data/sprite-map.json?v=1.3.20').then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('./src/data/levelup.json?v=1.3.2').then(r => r.ok ? r.json() : {}).then(x => { LEVELUP = x || {}; }).catch(() => {}),
       fetch('./src/data/move-desc-zh.json?v=1.3.7').then(r => r.ok ? r.json() : {}).then(x => { if (window.PKMMoveInfo) PKMMoveInfo.setDesc(x); }).catch(() => {}),
     ]);
@@ -1654,6 +1716,13 @@
     for (const e of Object.values(SPRITES)) {
       if (e.front) { SPRITE_FEET[e.front] = e.frontFeet; SPRITE_FEETX[e.front] = e.frontFeetX; SPRITE_BODY[e.front] = e.frontBody; SPRITE_MOUTH[e.front] = e.frontMouth; }
       if (e.back) { SPRITE_FEET[e.back] = e.backFeet; SPRITE_FEETX[e.back] = e.backFeetX; SPRITE_BODY[e.back] = e.backBody; SPRITE_MOUTH[e.back] = e.backMouth; }
+      for (const side of ['front', 'back']) {
+        const href = e[side];
+        if (!href) continue;
+        const u = new URL(href, document.baseURI).href;
+        SPRITE_FEET[u] = e[side + 'Feet']; SPRITE_FEETX[u] = e[side + 'FeetX'];
+        SPRITE_BODY[u] = e[side + 'Body']; SPRITE_MOUTH[u] = e[side + 'Mouth'];
+      }
     }
     PKMBattle.setData(dex, moves);
     PKMTeam.setData(dex, moves, learnsets);
@@ -1683,6 +1752,7 @@
     // URL config: ?config=<encodeURIComponent(JSON)>
     for (const id of ['p-sprite', 'e-sprite']) spriteResizeObserver?.observe($(id));
     const q = new URLSearchParams(location.search).get('config');
+    if (window.PKMPreview) worldStore = new PKMWorldSave.Store(memoryStorage());
     dataReady = true;
     if (pendingHostConfig) { const cfg = pendingHostConfig; pendingHostConfig = null; startHostBattle(cfg); return; }
     if (q) { try { startBattle(JSON.parse(q)); return; } catch (_) {} }
@@ -1707,6 +1777,48 @@
       startHostBattle(d.payload);
     } else if (d.type === 'PKM_BATTLE_PING') postHost(dataReady ? 'PKM_BATTLE_READY' : 'PKM_BATTLE_LOADING', { version: APP_VERSION });
   });
+
+  // Preview is opt-in and visual-only: no battle.turn(), results, or save writes.
+  if (new URLSearchParams(location.search).has('fxpreview')) {
+    document.documentElement.classList.add('fx-preview-mode');
+    let previewMon = null, previewBusy = false;
+    window.PKMPreview = {
+      ready: () => !!battle,
+      set(options = {}) {
+        if (!battle || previewBusy) return false;
+        const arena = document.querySelector('.arena'); arena.classList.add('fx-preview-arena');
+        PKMFieldFX.sync(arena, {weather:options.weather, field:{terrain:options.terrain}});
+        PKMFieldFX.configure(arena, {intensity:Number(options.intensity || 1),paused:!!options.paused});
+        const id = ['pikachu','charizard','venusaur','cinderace','urshifu','urshifurapidstrike'].includes(options.species) ? options.species : 'pikachu';
+        const form = ['normal','dynamax','gmax'].includes(options.form) ? options.form : 'dynamax';
+        previewMon = PKMBattle.createPokemon(id, 50, ['tackle']);
+        previewMon.dynamaxed = form !== 'normal'; previewMon.dynamaxForm = form === 'gmax' ? 'gmax' : '';
+        if (form === 'gmax' && PKMBattle._dex[id+'gmax']) previewMon.speciesId = id+'gmax';
+        setSprite($('p-sprite'), previewMon, true);
+        $('field-state').textContent = '效果预览 · 不消耗回合 / 不写入存档';
+        return true;
+      },
+      arcs() { PKMFieldFX.configure(document.querySelector('.arena'),{arcs:true}); },
+      async transform() {
+        if(!previewMon||previewBusy||!previewMon.dynamaxed)return false;
+        previewBusy=true;
+        const final={...previewMon},normal={...previewMon,speciesId:previewMon.originalSpeciesId||previewMon.speciesId,dynamaxed:false,dynamaxForm:''};
+        try{setSprite($('p-sprite'),normal,true);await waitMs(120);const url=spriteUrlForSnapshot(final,0);await runTransformPhases(0,'dynamax',{gmax:final.dynamaxForm==='gmax',newUrl:url,nextSprite:final});setSprite($('p-sprite'),final,true);return true;}finally{previewBusy=false;}
+      },
+      thunder() { PKMFieldFX.configure(document.querySelector('.arena'),{thunder:true}); },
+      replayTerrain() { PKMFieldFX.configure(document.querySelector('.arena'),{replayTerrain:true}); },
+      async attack(kind='physical') {
+        if (!previewMon || previewBusy) return false;
+        previewBusy=true;
+        try {
+          if(kind==='hit') animateImg(0,'fx-hit',720);
+          else if(kind==='special') { castImg(0,'Fire'); playMoveFx(0,{type:'Fire',category:'Special',target:'normal'}); }
+          else { animateImg(0,'fx-attack',680); playMoveFx(0,{type:'Normal',category:'Physical',target:'normal'}); }
+          await waitMs(1100); return true;
+        } finally { previewBusy=false; }
+      }
+    };
+  }
 
   init().catch(e => { $('log').textContent = '数据加载失败：' + e.message + '\n（请通过网页服务打开本页，不要直接双击文件）'; });
 })();

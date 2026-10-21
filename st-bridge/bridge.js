@@ -2,7 +2,7 @@
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.9');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.20');
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
 //       战斗结果写回 MVU 变量、生成前注入“剧情节点 + 变量摘要”、在场人物同步“已结识”。
@@ -15,7 +15,7 @@
 //       ② 和小智 / 小霞 / 小刚对战时，对战块漏写的伙伴宝可梦按原作进度补上（例：小智收服绿毛虫后 = 皮卡丘 + 绿毛虫）。
 //       ③ 对战画面的信息改准：顶部标签写对战类型和双方实际只数，敌方信息框写对手名字，战斗记录第一行写明赛制。
 // v1.3.7：精灵球可拖到屏幕任意位置；叫声可换成自己的动画配音（st-bridge/audio/cries/<id>.mp3）。
-import * as K from './kanto-data.js?v=1.3.9';
+import * as K from './kanto-data.js?v=1.3.20';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -1976,8 +1976,11 @@ function engineConfig(spec, pkm, tag) {
     encounter: { type: fmt.wild ? 'wild' : 'trainer' }, difficulty: cfg.difficulty || K.DIFFICULTY_BY_TYPE[type] || 'normal',
     p1: { entrants: [{ name: 'host-player', party }] }, p2: { entrants: [{ name: 'host-enemy', party: enemy }] },
     host: { tag, balls, intro: tx.intro }, ui: spec.ui || null };
-  const w = K.WEATHER[String(cfg.environment || '').trim()];
-  if (w) out.environment = { weather: w, weatherTurns: 0 };
+  // Normalize legacy Chinese/string environments and structured weather+terrain.
+  const rawEnv = typeof cfg.environment === 'object' && cfg.environment ? cfg.environment : {weather: cfg.environment};
+  const w = K.WEATHER[String(rawEnv.weather || '').trim()] || rawEnv.weather;
+  if (w || rawEnv.terrain) out.environment = { weather: w || null, weatherTurns: rawEnv.weatherTurns ?? 0,
+    terrain: rawEnv.terrain || null, terrainTurns: rawEnv.terrainTurns ?? 0 };
   return { engine: out, balls, type, fmt };
 }
 /* @format-end */
@@ -2097,7 +2100,7 @@ function openBattle(spec) {
   ensureHostStyle();
   const el = PD.createElement('div'); el.id = 'pkm-kanto-modal'; el.className = 'pkb';
   const title = cfg.title || `${K.TYPE_LABEL[fmt.type] || '对战'}${cfg.opponent ? ' · ' + cfg.opponent : ''}`;
-  el.innerHTML = `<div class="bar"><span class="t">⚔️ ${esc(title)}</span><span class="fmt" title="${esc(fmt.rule)}">${esc(fmt.label)}</span><span class="s"></span><button class="red" data-op="close">返回剧情</button></div><div class="stage"></div>`;
+  el.innerHTML = `<div class="bar"><span class="t">⚔️ ${esc(title)}</span><span class="fmt" title="${esc(fmt.rule)}">${esc(fmt.label)}</span><span class="s"></span><a href="${esc(BASE)}preview.html?v=${VERSION}" target="_blank" rel="noopener noreferrer" style="color:inherit;font-size:12px;white-space:nowrap">效果预览 ↗</a><button class="red" data-op="close">返回剧情</button></div><div class="stage"></div>`;
   PD.body.appendChild(el);
   modal = { el, frame: null, tag: null, key: spec.key, spec, cfg, comp, fmt, engine: null, balls: null, type: fmt.type, sent: false, done: false, sess, timer: null };
   if (sess) { sess.status = 'open'; sess.error = null; entryStatus(sess); }

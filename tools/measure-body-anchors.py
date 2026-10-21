@@ -26,6 +26,7 @@ CACHE.mkdir(parents=True, exist_ok=True)
 
 def measure(url):
     path = CACHE / (hashlib.sha256(url.encode()).hexdigest() + Path(url).suffix)
+    if url.startswith('./'): path = ROOT / url[2:]
     if not path.exists():
         response = requests.get(url, timeout=25)
         response.raise_for_status()
