@@ -923,3 +923,147 @@ html.embed main.panel { padding-top: 10px; }
 /* Giant cast shadow and smaller contact core share the measured floor anchor. */
 .sprite.is-dynamax::before { background:radial-gradient(ellipse,rgba(27,24,38,.32) 0%,rgba(32,27,42,.19) 35%,rgba(37,29,44,.06) 62%,transparent 76%); }
 .sprite.is-dynamax::after { width:calc(var(--shadow-width)*.5); height:calc(var(--shadow-height)*.38); background:radial-gradient(ellipse,rgba(22,18,29,.32),rgba(25,21,31,.12) 48%,transparent 74%); }
+
+/* v1.3.23: battle iframe fills the entire host viewport; no centered card or black gutters. */
+html.embed,
+html.embed body {
+  width: 100%; height: 100%; min-height: 0; overflow: hidden;
+}
+html.embed body { margin: 0; padding: 0; background: transparent; }
+html.embed main.panel {
+  position: fixed; inset: 0; z-index: 0;
+  width: 100%; height: 100vh; height: 100dvh; max-width: none; min-height: 0;
+  margin: 0; padding: 0; overflow: hidden;
+}
+html.embed .battle-screen {
+  --deck-h: clamp(168px, 24vh, 236px);
+  --deck-h: clamp(168px, 24dvh, 236px);
+  position: absolute; inset: 0;
+  display: grid; grid-template-rows: minmax(0, 1fr) var(--deck-h);
+  width: 100%; height: 100%; min-height: 0; margin: 0; overflow: hidden;
+  border: 0; border-radius: 0; box-shadow: none;
+}
+html.embed .arena { min-height: 0; border-radius: 0; }
+html.embed #field-state { display: none !important; }
+html.embed .battle-deck {
+  grid-template-columns: minmax(220px, 29%) minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px max(12px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+  clip-path: none; border-radius: 0;
+}
+html.embed .battle-deck .card { min-width: 0; box-shadow: 0 2px 6px rgba(20, 30, 40, .1); }
+html.embed .log-card,
+html.embed .action-card { clip-path: none; }
+
+/* Landscape phones: reserve most of the short viewport for the arena, keep all controls usable. */
+@media (orientation: landscape) and (max-height: 560px) {
+  html.embed .battle-screen {
+    --deck-h: clamp(106px, 36vh, 145px);
+    --deck-h: clamp(106px, 36dvh, 145px);
+  }
+  html.embed .battle-deck {
+    grid-template-columns: minmax(118px, 22%) minmax(0, 1fr);
+    gap: 6px;
+    padding: 4px max(7px, env(safe-area-inset-right, 0px)) max(4px, env(safe-area-inset-bottom, 0px)) max(7px, env(safe-area-inset-left, 0px));
+  }
+  html.embed .battle-deck .card { border-radius: 8px; }
+  html.embed .log-card { padding: 4px 6px; }
+  html.embed .log-card .card-heading { height: 18px; flex-basis: 18px; margin-bottom: 3px; gap: 4px; }
+  html.embed .log-card .heading-icon,
+  html.embed .log-card .card-heading p,
+  html.embed .sys-dots { display: none; }
+  html.embed .log-card .card-heading h3 { font-size: 11px; }
+  html.embed .log { padding: 3px 5px; font-size: 9px; line-height: 1.25; }
+  html.embed .action-card { gap: 3px; padding: 4px 6px; }
+  html.embed .command-heading { min-height: 17px; gap: 4px; }
+  html.embed .command-heading-text { gap: 4px; }
+  html.embed .command-heading h3 { font-size: 11px; }
+  html.embed .encounter-tag { padding: 2px 4px; font-size: 8px; }
+  html.embed .command-home { gap: 5px; padding: 0 2px 2px 0; }
+  html.embed .command-choice { grid-template-columns: 20px minmax(0, 1fr); column-gap: 4px; padding: 4px 5px; border-radius: 7px; box-shadow: 2px 2px 0 color-mix(in srgb, var(--choice) 26%, #dddce6); }
+  html.embed .command-choice strong { font-size: 13px; letter-spacing: 0; }
+  html.embed .command-choice small { font-size: 8px; line-height: 1.15; white-space: normal; }
+  html.embed .command-choice b { right: 4px; top: 2px; font-size: 10px; }
+  html.embed .command-symbol { font-size: 17px; }
+  html.embed .command-choice .mini-ball { width: 19px; height: 19px; }
+  html.embed .command-status { min-height: 10px; font-size: 8px; line-height: 1.2; }
+  html.embed .command-panel { padding: 0 2px 2px 0; }
+  html.embed .fight-panel .moves { gap: 4px; }
+  html.embed .fight-panel .move-btn { min-height: 22px; padding: 2px 5px 2px 9px; border-width: 2px; font-size: 9px; gap: 3px; }
+  html.embed .fight-panel .move-btn small { max-width: 58%; font-size: 7px; }
+  html.embed .command-panel #switches { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  html.embed .command-panel .switch-btn { min-height: 24px; padding: 2px 4px; gap: 4px; font-size: 9px; }
+  html.embed .command-panel .switch-btn small { font-size: 7px; }
+  html.embed .ball-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  html.embed .ball-choice { grid-template-columns: 18px minmax(0, 1fr) auto; min-height: 25px; padding: 2px 4px; gap: 3px; font-size: 8px; }
+  html.embed .ball-choice small { display: none; }
+  html.embed .ball-choice .mini-ball { width: 17px; height: 17px; }
+  html.embed .capture-hint { margin-bottom: 2px; font-size: 8px; line-height: 1.2; white-space: normal; }
+  html.embed .command-end { gap: 3px; }
+  html.embed .command-end p { font-size: 9px; }
+  html.embed .command-end > div { gap: 4px; }
+  html.embed .command-end button { padding: 3px 5px; font-size: 8px; }
+
+  html.embed .fighter.enemy {
+    top: max(6px, env(safe-area-inset-top, 0px));
+    left: max(12px, env(safe-area-inset-left, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+  }
+  html.embed .fighter.player {
+    left: max(12px, env(safe-area-inset-left, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: 0;
+  }
+  html.embed .fighter.enemy .sprite { height: 24vh; min-height: 0; --perspective-size: clamp(76px, 24vh, 112px); }
+  html.embed .fighter.enemy .sprite { height: 24dvh; min-height: 0; --perspective-size: clamp(76px, 24dvh, 112px); }
+  html.embed .fighter.player .sprite { height: 35vh; min-height: 0; --perspective-size: clamp(102px, 35vh, 148px); }
+  html.embed .fighter.player .sprite { height: 35dvh; min-height: 0; --perspective-size: clamp(102px, 35dvh, 148px); }
+  html.embed .fighter-info {
+    padding: 5px 8px; transform: none;
+  }
+  html.embed .fighter-info > * { transform: none; }
+  html.embed .side-label { display: none; }
+  html.embed .name { font-size: clamp(13px, 3.2vh, 16px); font-size: clamp(13px, 3.2dvh, 16px); }
+  html.embed .sub { margin-top: 0; font-size: 8px; }
+  html.embed .hpbar { height: 7px; margin-top: 3px; padding: 1px; }
+  html.embed .hptext { margin-top: 0; font-size: 8px; }
+  html.embed .teamrow { gap: 3px; margin-top: 3px; padding: 2px 5px; }
+  html.embed .pip { width: 9px; height: 9px; border-width: 1px; }
+  html.embed .fighter.player .fighter-info { margin-bottom: 0; }
+  html.embed .fighter.player .mechanic-slot { margin: 0 4px 4px 0; transform: scale(.68); transform-origin: bottom right; }
+  html.embed .arena::after { height: min(130px, 34vh); height: min(130px, 34dvh); }
+}
+
+/* Portrait fallback: the log gets a readable top strip instead of a narrow side column. */
+@media (orientation: portrait) and (max-width: 680px) {
+  html.embed .battle-screen {
+    --deck-h: clamp(235px, 31vh, 285px);
+    --deck-h: clamp(235px, 31dvh, 285px);
+  }
+  html.embed .battle-deck {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(72px, 32%) minmax(0, 1fr);
+    gap: 6px;
+    padding: 6px max(7px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(7px, env(safe-area-inset-left, 0px));
+  }
+  html.embed .log-card { padding: 4px 7px; }
+  html.embed .log-card .card-heading { height: 18px; flex-basis: 18px; margin-bottom: 3px; }
+  html.embed .log-card .heading-icon,
+  html.embed .log-card .card-heading p,
+  html.embed .sys-dots { display: none; }
+  html.embed .log-card .card-heading h3 { font-size: 11px; }
+  html.embed .log { padding: 3px 6px; font-size: 9px; line-height: 1.25; }
+  html.embed .action-card { gap: 4px; padding: 5px 6px; }
+  html.embed .command-choice { min-width: 0; padding: 5px 4px; }
+  html.embed .command-choice small { font-size: 8px; }
+  html.embed .fight-panel .move-btn { min-height: 44px; padding: 4px 5px 4px 10px; font-size: 10px; }
+  html.embed .fight-panel .move-btn small { font-size: 8px; }
+}
+
+/* A live battle needs no explanatory status pill; keep it only in the effect-preview workbench. */
+.battle-screen #field-state { display: none !important; }
+html.fx-preview-mode .battle-screen #field-state { display: block !important; }
+/* The preview workbench shares embed=1 but intentionally shows the arena only. */
+html.fx-preview-mode .battle-screen { display: block; height: 100%; min-height: 0; grid-template-rows: none; }
+html.fx-preview-mode .arena { height: 100%; }
+html.fx-preview-mode .battle-deck { display: none !important; }

@@ -1,8 +1,8 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.22（队伍面板 HP／图标对齐修复）
+// 宝可梦·关都之旅 · 外置桥接 v1.3.23（战斗全屏与手机横屏适配）
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.22-panel-hp-icons-1');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.23-battle-fullscreen-1');
 // 面板布局依 v1.3.0 机制修复卡恢复：蓝色队伍卡、绿色六列仓库；队伍／仓库操作仍读写实时 MVU 变量。
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
@@ -16,7 +16,7 @@
 //       ② 和小智 / 小霞 / 小刚对战时，对战块漏写的伙伴宝可梦按原作进度补上（例：小智收服绿毛虫后 = 皮卡丘 + 绿毛虫）。
 //       ③ 对战画面的信息改准：顶部标签写对战类型和双方实际只数，敌方信息框写对手名字，战斗记录第一行写明赛制。
 // v1.3.7：精灵球可拖到屏幕任意位置；叫声可换成自己的动画配音（st-bridge/audio/cries/<id>.mp3）。
-import * as K from './kanto-data.js?v=1.3.22';
+import * as K from './kanto-data.js?v=1.3.23';
 
 const VERSION = K.VERSION;
 const W = window;
