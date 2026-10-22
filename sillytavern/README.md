@@ -1,28 +1,30 @@
-# SillyTavern 角色卡导入 · v1.3.20
+> v0.9.0新增野生捕获结果字段，见 `../docs/world-protocol.md`。地图/角色卡侧仍未闭环，以下历史草案不代表正式世界存档已接通。
 
-完整角色卡位于：
+# 与 SillyTavern 角色卡的对接（阶段五细化前的草案）
 
-```text
-../character-card/宝可梦·关都之旅-v1.3.20-完整配套角色卡.json
-```
+对战页面已经预留了三种配置入口，桥接脚本（阶段五）会基于它们完成闭环：
 
-## 使用前
+1. **页面内粘贴**：对战页"高级"面板可直接粘贴 `<PKM_BATTLE>{...}</PKM_BATTLE>` 或纯 JSON。
+2. **URL 传参**：`https://你的用户名.github.io/pokemon-battle/?config=<encodeURIComponent(JSON)>`。
+3. **postMessage**（正式对接方式）：宿主页面向对战 iframe 发送
+   `{ type: 'PKM_BATTLE_CONFIG', payload: <配置对象> }`；
+   战斗结束后对战页向父窗口回发
+   `{ type: 'PKM_BATTLE_RESULT', payload: { winner, turns, playerTeam, enemyTeam, log } }`。
 
-1. 先按仓库根目录 [`README.md`](../README.md) 部署配套的 `pokemon-battle` v1.3.20 GitHub Pages 仓库。
-2. 确认 `https://hongshengh4-cmd.github.io/pokemon-battle/st-bridge/bridge.js?v=1.3.20` 可访问，主页页脚显示 `v1.3.20`。
-3. 在 SillyTavern 安装并启用 MVU 和酒馆助手（JS-Slash-Runner）。
+## 计划中的卡侧组件
 
-## 导入
+- **世界书《战斗规则》条目**：约束 AI 仅在战斗触发时输出 `<PKM_BATTLE>` 配置：
+  - `difficulty`: easy / normal / hard / expert
+  - `p1.entrants` / `p2.entrants`：训练师或野生实体；玩家默认引用 MVU 存档队伍
+  - 实体 `party` 支持两种写法：引用内置训练师，或现场构造
+    `{ "name": "Garchomp", "lv": 60, "moves": ["Earthquake", "Dragon Claw", "Stone Edge", "Swords Dance"] }`
+  - 可选 `environment`: `{ "weather": "sandstorm", "weatherTurns": 5 }`
+  - `lines`: start / win / lose / escape 台词
+- **`[initvar]` MVU 变量**：`pkm.player / party.slots[6] / box / world / npcs / battle.lastResult / settings`（结构在阶段五按最终字段冻结后写入卡文件）。
+- **《变量规则》条目**：AI 只用 JSONPatch 增量更新队伍与成长字段，禁止整表覆写。
+- **正则组**：发送时裁剪战斗配置块避免回灌；显示时把配置块替换为 iframe 包装器（内嵌上方地址的对战页，并把该楼的变量快照透传给页面）。
+- **酒馆助手桥接脚本**：监听楼层变量 → 打开/刷新对战 → 接收 `PKM_BATTLE_RESULT` → 回写 `battle.lastResult` 与队伍剩余 HP → 注入"按结果回放叙事"的系统提示。
 
-1. 将上述 JSON 导入 SillyTavern，打开角色卡。
-2. 按酒馆助手提示允许角色卡脚本运行；需允许脚本和网络请求。
-3. 发送开场消息，进入开局登记流程并选择旅程模式、训练家档案和初始伙伴。
-4. 图鉴、状态栏、跟随宝可梦、附近遭遇和对战由配套外置桥接加载。对战页使用本站 `index.html`。
+## 当前状态
 
-卡片中的 `scripts[1]` 会加载桥接，并安装卡侧的兼容插件：短按互动、按 HP/异常状态/羁绊变化的情绪反应、抚摸、闲置动作、睡眠/唤醒及聊天事件反应。拖动会抑制误触；长按跟随宝可梦打开队伍面板。实际情绪与队伍状态读取卡内数据，不会由本地预览写入存档。
-
-若 Pages 部署到其他域名或仓库路径，请在角色卡脚本 `scripts[1]` 中修改 `PKM_APP_BASE_URL`。
-
-## 本地互动预览
-
-[`../character-card/酒馆交互预览.html`](../character-card/酒馆交互预览.html) 是独立演示页：可以切换健康、低血量、中毒、麻痹、普通羁绊和睡眠场景，并测试输入/发送、拖动和长按。预览不连接 SillyTavern、不写入 MVU。
+对战页侧的接口已就绪且经过测试；卡侧组件在阶段五统一制作成一张可直接导入的角色卡 JSON（与前面对话中已修复的那张 MVU 卡同样的交付方式），避免半成品协议先行扩散。

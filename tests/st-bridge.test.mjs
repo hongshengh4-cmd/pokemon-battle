@@ -19,6 +19,19 @@ test('bridge.js parses as an ES module', () => {
   execFileSync(process.execPath, ['--check', new URL('st-bridge/bridge.js', root).pathname.replace(/\.js$/, '.js')], { stdio: 'pipe' });
   assert.ok(read('st-bridge/bridge.js').includes("import * as K from './kanto-data.js"));
 });
+test('Ball panel restores the v1.3.0 blue team / green 6-column storage layout', () => {
+  const br = read('st-bridge/bridge.js');
+  assert.ok(br.includes('#pkm-kanto-panel .party{display:grid;grid-template-columns:1fr 1fr;'));
+  assert.ok(br.includes('#pkm-kanto-panel .boxgrid{flex:1;background:linear-gradient(180deg,#a9dcc4,#7fc2a6)'));
+  assert.ok(br.includes('grid-template-columns:repeat(6,1fr)'));
+  assert.ok(br.includes('function panelPartyMarkup(pkm)'));
+  assert.ok(br.includes('function panelStorageMarkup(pkm)'));
+  assert.ok(br.includes('function panelDetailMarkup(pkm)'));
+  assert.ok(br.includes('没有记录时显示“当前/—”'));
+  assert.ok(br.includes("data-op=\"follow\""));
+  assert.ok(br.includes("data-op=\"toparty\""));
+  assert.ok(br.includes("data-op=\"tobox\""));
+});
 test('Every encounter species has a Chinese name known to the battle site', () => {
   const all = [...Object.values(K.ENCOUNTERS).flat(), ...K.WATER_ENCOUNTERS];
   for (const [name, lo, hi] of all) { assert.ok(zhSpecies.has(name), name); assert.ok(lo >= 1 && hi >= lo && hi <= 100, name); }
