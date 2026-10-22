@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import vm from 'node:vm';
 const root = new URL('../', import.meta.url), read = p => fs.readFileSync(new URL(p, root), 'utf8');
 const K = await import(new URL('st-bridge/kanto-data.js', root));
 const zh = JSON.parse(read('src/data/zh-names.json'));
@@ -27,7 +28,9 @@ test('Ball panel restores the v1.3.0 blue team / green 6-column storage layout',
   assert.ok(br.includes('function panelPartyMarkup(pkm)'));
   assert.ok(br.includes('function panelStorageMarkup(pkm)'));
   assert.ok(br.includes('function panelDetailMarkup(pkm)'));
-  assert.ok(br.includes('没有记录时显示“当前/—”'));
+  assert.ok(br.includes('const computedMaxValue = Number(monStats(s)?.hp);'));
+  assert.ok(br.includes('const max = storedMax || computedMax;'));
+  assert.ok(br.includes('空 HP 按满血显示'));
   assert.ok(br.includes("data-op=\"follow\""));
   assert.ok(br.includes("data-op=\"toparty\""));
   assert.ok(br.includes("data-op=\"tobox\""));
@@ -36,6 +39,29 @@ test('Ball panel exposes direct open/close methods for long-press handlers', () 
   const br = read('st-bridge/bridge.js');
   assert.ok(br.includes('function openPanel() { renderPanel(); return PD.getElementById(\'pkm-kanto-panel\'); }'));
   assert.ok(br.includes('openPanel, togglePanel, closePanel:'));
+});
+test('Panel derives missing HP from species stats and preserves explicit fainting', () => {
+  const br = read('st-bridge/bridge.js');
+  const start = br.indexOf('function panelHpInfo(s) {');
+  const end = br.indexOf('\nfunction panelHpMarkup(s)', start);
+  assert.ok(start >= 0 && end > start, 'panelHpInfo source should be extractable');
+  const source = br.slice(start, end) + '\nresult = panelHpInfo(s);';
+  const evaluate = s => {
+    const context = { s, monStats: () => ({ hp: 20 }) };
+    vm.runInNewContext(source, context);
+    return JSON.parse(JSON.stringify(context.result));
+  };
+  assert.deepEqual(evaluate({ species: 'charmander', lv: 5, hp: null, maxHp: null }), { hp: 20, max: 20, ratio: 1, label: '20/20', color: '', faint: false });
+  assert.deepEqual(evaluate({ species: 'charmander', lv: 5, hp: 0, maxHp: null }), { hp: 0, max: 20, ratio: 0, label: '0/20', color: 'low', faint: true });
+  assert.deepEqual(evaluate({ species: 'charmander', lv: 5, hp: 10, maxHp: 21 }), { hp: 10, max: 21, ratio: 10 / 21, label: '10/21', color: 'mid', faint: false });
+  assert.ok(br.includes('<details class="stx" open>'), 'calculated stats should be expanded by default');
+});
+test('Panel header groups tools and aligns mobile icon buttons', () => {
+  const br = read('st-bridge/bridge.js');
+  assert.ok(br.includes('<div class="pb-tools">') && br.includes('<div class="pb-icons">'));
+  assert.ok(br.includes('display:inline-flex;align-items:center;justify-content:center'));
+  assert.ok(br.includes('.pb-x svg{display:block;width:18px;height:18px;flex:none}'));
+  assert.ok(br.includes('.pb-tools{flex:1;width:100%;justify-content:space-between'));
 });
 test('Missing anime audio uses the original game cry synchronously by default', () => {
   const br = read('st-bridge/bridge.js');
@@ -76,7 +102,6 @@ test('Opening screen images exist for every mode and starter', () => {
 });
 
 // ---------- v1.3.4 ----------
-import vm from 'node:vm';
 const ectx = { console, Math, JSON, Object, Array, Number, String, Boolean, Promise, Error, TypeError, Set, Map }; ectx.globalThis = ectx; vm.createContext(ectx);
 for (const p of ['src/engine/typechart.js', 'src/engine/mechanics.js', 'src/engine/battle.js', 'src/engine/capture.js']) vm.runInContext(read(p), ectx);
 const E = ectx.PKMBattle; E.setData(JSON.parse(read('src/data/pokedex.json')), moves);

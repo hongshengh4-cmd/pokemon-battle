@@ -1,9 +1,9 @@
-# st-bridge · 宝可梦·关都之旅 外置桥接（v1.3.21·实卡跟随／叫声／长按修复）
+# st-bridge · 宝可梦·关都之旅 外置桥接（v1.3.22·队伍面板 HP／图标对齐修复）
 
 这个目录是给 SillyTavern 角色卡「宝可梦·关都之旅」用的**外置桥接脚本**。角色卡里的「酒馆助手」脚本只有几行，真正的逻辑都从这里加载：
 
 ```
-https://<你的用户名>.github.io/pokemon-battle/st-bridge/bridge.js?v=1.3.21-follow-voice-hold-1
+https://<你的用户名>.github.io/pokemon-battle/st-bridge/bridge.js?v=1.3.22-panel-hp-icons-1
 ```
 
 | 文件 | 作用 |
@@ -14,10 +14,16 @@ https://<你的用户名>.github.io/pokemon-battle/st-bridge/bridge.js?v=1.3.21-
 | `kanto-data.js` | 关都数据：地图节点、各地点遭遇表、初始伙伴、徽章、称号、球种中文名、v1.3.8 赛制表（`EVENT_FORMATS` / `GYM_RULES`）、v1.3.9 伙伴阵容表（`NPC_ROSTERS`）与对战标签（`BATTLE_LABEL`）等 |
 | `audio/cries/` | 动漫配音录音：放 `<英文名小写>.mp3`；没有录音的按面板设置用原作游戏叫声 / 语音合成 / 不出声代替；命名对照表、录音建议、检查 / 转换工具见该目录的 `README.md` 与 `CHECKLIST.md` |
 
+## 队伍面板 HP 与手机顶栏修复（v1.3.22）
+
+- 缺少存档 `maxHp` 时，详情页使用桥接内的种族值表与当前等级、个体值、性格计算显示上限；`hp:null` 表示满血／刚治疗，显示为计算后的满值，明确的 `hp:0` 仍显示濒死。
+- 能力／个体资料默认展开；手机顶栏把队伍／仓库标签与定位、叫声、关闭按钮分组，使用 18px 内嵌 SVG 图标与固定按钮尺寸并统一居中对齐。
+- 角色卡 JSON 单独分发，不包含在网站仓库 ZIP 中。
+
 ## 队伍／仓库面板（v1.3.20 面板恢复修订）
 
 - 面板布局按 v1.3.0 机制修复卡恢复：蓝色队伍卡、绿色六列仓库网格（每页 30 格）、右侧详情；窄屏改为单列队伍卡和可返回的详情层。
-- 面板实时读取 MVU `stat_data.pkm`；支持设首发、跟随／收回、队伍与仓库互存。未记录最大 HP 时显示“当前 HP/—”，不从缺项推算。
+- 面板实时读取 MVU `stat_data.pkm`；支持设首发、跟随／收回、队伍与仓库互存。缺失 `maxHp` 时按物种、等级、个体值与性格计算展示上限；空 `hp` 按满血显示，明确 `hp:0` 仍按濒死处理。
 - 动漫录音目录目前不附 MP3；选动漫配音时按设置回退。🎮 游戏配音使用 Pokémon Showdown 的原作游戏叫声，并非动画配音。
 
 ## 实卡交互修复（v1.3.21）
@@ -61,7 +67,7 @@ https://<你的用户名>.github.io/pokemon-battle/st-bridge/bridge.js?v=1.3.21-
 npm test        # 含 tests/st-bridge.test.mjs
 ```
 
-部署后打开 `https://<你的用户名>.github.io/pokemon-battle/st-bridge/bridge.js?v=1.3.21-follow-voice-hold-1`，能看到代码（不是 404）就说明 v1.3.21 实卡交互修复桥接已上线；网站页脚应显示 `v1.3.21`。
+部署后打开 `https://<你的用户名>.github.io/pokemon-battle/st-bridge/bridge.js?v=1.3.22-panel-hp-icons-1`，能看到代码（不是 404）就说明 v1.3.22 队伍面板修复桥接已上线；网站页脚应显示 `v1.3.22`。
 
 ## 图片来源（同人非商用）
 

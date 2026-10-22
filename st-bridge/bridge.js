@@ -1,8 +1,8 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.21（实卡跟随／叫声／长按修复）
+// 宝可梦·关都之旅 · 外置桥接 v1.3.22（队伍面板 HP／图标对齐修复）
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.21-follow-voice-hold-1');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.22-panel-hp-icons-1');
 // 面板布局依 v1.3.0 机制修复卡恢复：蓝色队伍卡、绿色六列仓库；队伍／仓库操作仍读写实时 MVU 变量。
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
@@ -16,7 +16,7 @@
 //       ② 和小智 / 小霞 / 小刚对战时，对战块漏写的伙伴宝可梦按原作进度补上（例：小智收服绿毛虫后 = 皮卡丘 + 绿毛虫）。
 //       ③ 对战画面的信息改准：顶部标签写对战类型和双方实际只数，敌方信息框写对手名字，战斗记录第一行写明赛制。
 // v1.3.7：精灵球可拖到屏幕任意位置；叫声可换成自己的动画配音（st-bridge/audio/cries/<id>.mp3）。
-import * as K from './kanto-data.js?v=1.3.21';
+import * as K from './kanto-data.js?v=1.3.22';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -1259,13 +1259,16 @@ const HOST_CSS = BASE_CSS + `
 #pkm-kanto-panel.show{display:flex;animation:pkPop .18s ease-out}
 @keyframes pkPop{from{opacity:0;transform:scale(.94) translateY(10px)}}
 #pkm-kanto-panel *{box-sizing:border-box}
-#pkm-kanto-panel .pb-head{display:flex;align-items:center;gap:10px;padding:10px 12px;color:#fff;background:repeating-linear-gradient(135deg,rgba(255,255,255,.06) 0 10px,transparent 10px 20px)}
-#pkm-kanto-panel .pb-head h3{margin:0;font-size:16px;letter-spacing:1px;flex:1;display:flex;align-items:center;gap:8px}
-#pkm-kanto-panel .pb-head h3 i{width:18px;height:18px;border-radius:50%;border:2px solid #1c1c1c;background:linear-gradient(#ee1515 0 45%,#1c1c1c 45% 55%,#fff 55%);display:inline-block}
-#pkm-kanto-panel .pb-tabs{display:flex;background:rgba(0,0,0,.2);border-radius:10px;padding:3px}
-#pkm-kanto-panel .pb-tabs button{border:0;background:none;color:#cfe3ff;font-weight:800;font-size:13px;padding:6px 14px;border-radius:8px;cursor:pointer;font-family:inherit}
+#pkm-kanto-panel .pb-head{display:flex;align-items:center;gap:12px;padding:10px 12px;color:#fff;background:repeating-linear-gradient(135deg,rgba(255,255,255,.06) 0 10px,transparent 10px 20px)}
+#pkm-kanto-panel .pb-head h3{margin:0;font-size:16px;letter-spacing:1px;flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+#pkm-kanto-panel .pb-head h3 i{width:18px;height:18px;border-radius:50%;border:2px solid #1c1c1c;background:linear-gradient(#ee1515 0 45%,#1c1c1c 45% 55%,#fff 55%);display:inline-block;flex:none}
+#pkm-kanto-panel .pb-tools{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex:none;min-width:0}
+#pkm-kanto-panel .pb-tabs{display:flex;align-items:center;background:rgba(0,0,0,.2);border-radius:10px;padding:3px;flex:none}
+#pkm-kanto-panel .pb-tabs button{border:0;background:none;color:#cfe3ff;font-weight:800;font-size:13px;padding:6px 14px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap}
 #pkm-kanto-panel .pb-tabs button.on{background:#fff;color:#1d5fa8}
-#pkm-kanto-panel .pb-x{border:0;background:rgba(0,0,0,.25);color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px}
+#pkm-kanto-panel .pb-icons{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none}
+#pkm-kanto-panel .pb-x{border:0;background:rgba(0,0,0,.25);color:#fff;width:34px;height:34px;flex:0 0 34px;border-radius:50%;cursor:pointer;font-size:16px;padding:0;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+#pkm-kanto-panel .pb-x svg{display:block;width:18px;height:18px;flex:none}
 #pkm-kanto-panel .pb-body{flex:1;display:flex;gap:10px;padding:0 10px 10px;min-height:0}
 #pkm-kanto-panel .pb-left{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
 #pkm-kanto-panel .pb-right{width:300px;flex:none;background:#f5f8fc;border-radius:14px;overflow:auto;position:relative}
@@ -1334,11 +1337,17 @@ const HOST_CSS = BASE_CSS + `
 #pkm-kanto-panel .toast.on{opacity:1}
 @media(max-width:680px){
  #pkm-kanto-panel{right:3vw!important;left:3vw!important;width:auto;bottom:12px!important;top:auto!important;height:84vh}
+ #pkm-kanto-panel .pb-head{gap:8px;padding:8px 10px;min-height:50px}
+ #pkm-kanto-panel .pb-head h3{display:none}
+ #pkm-kanto-panel .pb-tools{flex:1;width:100%;justify-content:space-between;gap:8px}
+ #pkm-kanto-panel .pb-tabs{min-width:0}
+ #pkm-kanto-panel .pb-tabs button{padding:6px 10px}
+ #pkm-kanto-panel .pb-icons{gap:6px}
+ #pkm-kanto-panel .pb-x{width:34px;height:34px;flex-basis:34px}
  #pkm-kanto-panel .pb-right{display:none}
  #pkm-kanto-panel .pb-right.show{display:block;position:absolute;inset:56px 10px 10px;width:auto;z-index:5;box-shadow:0 10px 30px rgba(0,0,0,.35)}
  #pkm-kanto-panel .dt-back{display:block}
  #pkm-kanto-panel .party{grid-template-columns:1fr}
- #pkm-kanto-panel .pb-tabs button{padding:6px 10px}
 }
 /* —— 卡内追加 —— */
 #pkm-kanto-panel img.mini{width:22px!important;height:22px!important;image-rendering:pixelated!important;object-fit:contain!important;vertical-align:-6px;margin:-5px -2px!important;display:inline-block!important}
@@ -1843,7 +1852,7 @@ function statBlock(s) {
   const [up, down] = K.NATURE_EFFECT[natureZh(s.nature)] || [];
   const cells = K.STAT_KEYS.map(k => `<span class="${k === up ? 'up' : k === down ? 'down' : ''}"><b>${K.STAT_ZH[k]}</b>${st ? st[k] : '—'}${k === up ? '↑' : k === down ? '↓' : ''}<em>个体 ${ivOk(iv[k]) ? iv[k] : '?'}</em></span>`).join('');
   const bars = AVS_KEYS.map(k => `<span><b>${K.AVS_ZH[k]}</b><i><u style="width:${Math.max(0, Math.min(100, Number(av[k]) || 0))}%"></u></i>${Number(av[k]) || 0}</span>`).join('');
-  return `<details class="stx"><summary>能力 · 个体 · 羁绊 <span class="muted">${esc(K.QUALITY_ZH[s.quality] || '')}${cryLines(s.species || s.name)[0] ? ' · 叫声「' + esc(cryLines(s.species || s.name)[0]) + '」' : ''}</span></summary><div class="sg">${cells}</div><div class="bd2">${bars}</div></details>`;
+  return `<details class="stx" open><summary>能力 · 个体 · 羁绊 <span class="muted">${esc(K.QUALITY_ZH[s.quality] || '')}${cryLines(s.species || s.name)[0] ? ' · 叫声「' + esc(cryLines(s.species || s.name)[0]) + '」' : ''}</span></summary><div class="sg">${cells}</div><div class="bd2">${bars}</div></details>`;
 }
 function togglePanel() { const p = PD.getElementById('pkm-kanto-panel'); if (p) p.remove(); else renderPanel(); }
 function openPanel() { renderPanel(); return PD.getElementById('pkm-kanto-panel'); }
@@ -1872,11 +1881,16 @@ function probePanel(mons) {
   }
 }
 function panelHpInfo(s) {
-  // 面板只把存档中明确写入的 maxHp 当作最大体力；没有记录时显示“当前/—”，不从缺失资料推算。
-  const max = Number(s.maxHp) > 0 ? Number(s.maxHp) : 0;
+  // 先尊重存档中的 maxHp；若缺失，则用本站种族值、等级、个体值与性格计算展示上限。
+  // hp=null 是本项目的“满血／刚治疗”标记，新伙伴因此显示计算后的满血值；明确 hp=0 仍显示濒死。
+  const storedMax = Number(s.maxHp) > 0 ? Number(s.maxHp) : 0;
+  const computedMaxValue = Number(monStats(s)?.hp);
+  const computedMax = computedMaxValue > 0 ? computedMaxValue : 0;
+  const max = storedMax || computedMax;
   const hasCurrent = s.hp !== null && s.hp !== undefined && s.hp !== '';
   const raw = hasCurrent ? Number(s.hp) : (max ? max : null);
-  const hp = Number.isFinite(raw) ? Math.max(0, raw) : null;
+  const parsed = Number.isFinite(raw) ? Math.max(0, raw) : null;
+  const hp = parsed !== null && max ? Math.min(parsed, max) : parsed;
   const ratio = max ? Math.max(0, Math.min(1, (hp ?? max) / max)) : (hp === 0 ? 0 : 1);
   const label = max ? `${Math.round(hp ?? max)}/${max}` : (hp === null ? '—/—' : `${Math.round(hp)}/—`);
   const color = hp === 0 ? 'low' : (max ? (ratio < .2 ? 'low' : ratio < .5 ? 'mid' : '') : 'unknown');
@@ -1973,7 +1987,7 @@ function panelDetailMarkup(pkm) {
     <div style="padding:0 12px 8px">${panelHpMarkup(s)}</div></div>
     <div class="dt-sec"><h5>资料</h5><div class="kv"><div><span>宝可梦</span>${esc(species)}</div><div><span>等级</span>Lv.${esc(s.lv ?? '?')}</div><div><span>HP</span>${esc(hpLabel)}</div><div><span>状态</span>${esc(status)}</div><div><span>性别</span>${esc(gender)}</div><div><span>位置</span>${where === 'party' ? `队伍第${selection.index + 1}格` : `仓库第${selection.index + 1}格`}</div><div><span>携带物品</span>${itemHtml}</div><div><span>精灵球</span>${esc(s.ball || '未记录')}</div><div class="wide"><span>相遇记录</span>${esc(location)}</div></div></div>
     <div class="dt-sec"><h5>招式</h5><div class="mv">${moveMarkup}</div></div>
-    <div class="dt-sec"><h5>能力与个体资料</h5><div class="kv"><div><span>特性</span>${esc(ability)}</div><div><span>性格</span>${esc(nature)}</div><div class="wide"><span>资料来源</span>缺失字段标为未记录；HP 最大值不从缺项推算</div></div>${statBlock(s)}</div>
+    <div class="dt-sec"><h5>能力与个体资料</h5><div class="kv"><div><span>特性</span>${esc(ability)}</div><div><span>性格</span>${esc(nature)}</div><div class="wide"><span>能力值说明</span>按等级、种族值、个体值和性格计算；新伙伴或治疗后的空 HP 按满血显示</div></div>${statBlock(s)}</div>
     <div class="dt-sec"><h5>配音</h5>${voice}</div>
     ${panelAudioSettings()}
     <div class="acts">${acts}</div>`;
@@ -2002,8 +2016,13 @@ function renderPanel() {
     if (!hasMon(source?.[panelSelection.index])) panelSelection = null;
   }
   let muted = false; try { muted = P.localStorage?.getItem('pkmKantoMute') === '1'; } catch (_) {}
-  el.innerHTML = `<div class="pb-head"><h3><i></i>宝可梦</h3><div class="pb-tabs"><button type="button" data-tab="party" class="${panelTab === 'party' ? 'on' : ''}">队伍 ${count}/6</button><button type="button" data-tab="box" class="${panelTab === 'box' ? 'on' : ''}">仓库</button></div>
-    <button type="button" class="pb-x" data-op="resetpos" title="把精灵球放回右下角">📍</button><button type="button" class="pb-x" data-op="mute" title="跟随宝可梦的叫声">${muted ? '🔇' : '🔊'}</button><button type="button" class="pb-x" data-op="close" aria-label="关闭">✕</button></div>
+  const resetIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-6.6 8-13A8 8 0 1 0 4 9c0 6.4 8 13 8 13Z" fill="#ff557c"/><circle cx="12" cy="9" r="2.5" fill="#fff"/></svg>';
+  const soundIcon = muted
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3Z" fill="currentColor"/><path d="m16 9 5 6m0-6-5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3Z" fill="currentColor"/><path d="M16 8a6 6 0 0 1 0 8M18.5 5.5a9.5 9.5 0 0 1 0 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  const closeIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>';
+  el.innerHTML = `<div class="pb-head"><h3><i></i>宝可梦</h3><div class="pb-tools"><div class="pb-tabs"><button type="button" data-tab="party" class="${panelTab === 'party' ? 'on' : ''}">队伍 ${count}/6</button><button type="button" data-tab="box" class="${panelTab === 'box' ? 'on' : ''}">仓库</button></div>
+    <div class="pb-icons"><button type="button" class="pb-x" data-op="resetpos" title="把精灵球放回右下角" aria-label="复位精灵球">${resetIcon}</button><button type="button" class="pb-x" data-op="mute" title="跟随宝可梦的叫声" aria-label="切换叫声">${soundIcon}</button><button type="button" class="pb-x" data-op="close" aria-label="关闭">${closeIcon}</button></div></div></div>
     <div class="pb-body"><div class="pb-left">${panelTab === 'party' ? panelPartyMarkup(pkm) : panelStorageMarkup(pkm)}</div><div class="pb-right ${panelSelection ? 'show' : ''}">${panelDetailMarkup(pkm)}</div></div>
     <div class="pb-foot"><span>点击宝可梦查看详情</span><span class="pf-r">队伍 ${count}/6 · 仓库 ${pkm.party.box.length}</span></div><div class="toast"></div>`;
   placePanel();
