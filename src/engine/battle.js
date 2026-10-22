@@ -76,6 +76,23 @@
     if (p._battle?.field?.gravity > 0) return true;
     return !p.types?.includes('Flying') && abilityId(p) !== 'levitate';
   }
+  const MAJOR_STATUSES = new Set(['par', 'brn', 'psn', 'tox', 'slp', 'frz']);
+  function statusImmunityReason(p, status, battle = p?._battle) {
+    const st = String(status || '').toLowerCase(), ab = abilityId(p), types = p?.types || [];
+    if (!MAJOR_STATUSES.has(st)) return 'invalid';
+    const abilityBlocked = (st === 'brn' && ab === 'waterveil') || (st === 'par' && ab === 'limber')
+      || (st === 'slp' && ['insomnia', 'vitalspirit'].includes(ab)) || (['psn', 'tox'].includes(st) && ab === 'immunity')
+      || (st === 'frz' && ab === 'magmaarmor') || ab === 'purifyingsalt' || ab === 'comatose'
+      || (st === 'slp' && ab === 'leafguard' && battle?.weather === 'sun');
+    if (abilityBlocked) return 'ability';
+    if ((st === 'brn' && types.includes('Fire')) || (st === 'frz' && types.includes('Ice'))
+      || (st === 'par' && types.includes('Electric')) || (['psn', 'tox'].includes(st) && (types.includes('Poison') || types.includes('Steel')))) return 'type';
+    if (battle && isGrounded(p)) {
+      if (battle.field?.terrain === 'misty') return 'misty';
+      if (battle.field?.terrain === 'electric' && st === 'slp') return 'electric';
+    }
+    return null;
+  }
 
   function battleStat(p, key, opts = {}) {
     let stage = opts.ignoreStages ? 0 : (p.stages[key] || 0);
@@ -224,7 +241,7 @@
       teraType: MECH?.canonType(opts.teraType) || null, terastallized: false,
       zType, dynamaxForm: opts.dynamaxForm === 'gmax' || opts.gmax ? 'gmax' : null,
       isMega: id.includes('mega'), dynamaxed: false, dynamaxTurns: 0, normalMaxHp: null, _preDynamax: null,
-      choiceLockedMove: null, enteredTurn: 0, _enteredThisTurn: false, _side: null,
+      choiceLockedMove: null, enteredTurn: 0, _enteredThisTurn: false, _side: null, _protectStreak: 0,
     };
   }
 
@@ -365,8 +382,25 @@
       this.outcome = null; this.capture = null; this.lastCapture = null;
       this.pendingSwitch = null; // side index that must switch (player-facing)
       this.mechanicUsed = [{ mega: false, z: false, dynamax: false, tera: false }, { mega: false, z: false, dynamax: false, tera: false }];
-      this.teams.forEach((team, side) => team.forEach(p => { p._battle = this; p._side = side; p._enteredThisTurn = false; }));
+      this.teams.forEach((team, side) => team.forEach(p => {
+        p._battle = this; p._side = side; p._enteredThisTurn = false; p._protectStreak = 0;
+        delete p._initialStatusRejected;
+        if (p.status && !p.fainted) {
+          const reason = statusImmunityReason(p, p.status, this);
+          if (reason) {
+            p._initialStatusRejected = { status: p.status, reason };
+            p.status = null; p.sleepTurns = 0;
+          } else if (p.status === 'slp' && !(p.sleepTurns > 0)) p.sleepTurns = 1 + Math.floor(this.rng() * 3);
+          else if (p.status === 'tox' && !(p.toxicCounter > 0)) p.toxicCounter = 1;
+        }
+      }));
       this.say(`战斗开始！${this.cur(1).name} 对 ${this.cur(0).name}`);
+      for (const p of this.teams.flat()) if (p._initialStatusRejected) {
+        const { status, reason } = p._initialStatusRejected;
+        const cause = reason === 'type' ? '属性' : reason === 'ability' ? '特性' : reason === 'invalid' ? '状态值无效' : '场地';
+        this.say(`${p.name} 的外部初始状态（${STATUS_NAMES[status] || status}）因${cause}无效，已忽略。`);
+        delete p._initialStatusRejected;
+      }
       [0, 1].sort((a, b) => effStat(this.cur(b), 'spe') - effStat(this.cur(a), 'spe')).forEach(side => this.onEnter(side, true));
     }
     say(msg) { this.log.push(msg); }
@@ -402,6 +436,7 @@
         this.applyDamage(p, dmg, `${p.name} 受到了隐形岩的伤害！`);
         if (p.hp <= 0) return;
       }
+      // Flying/Levitate users ignore grounded hazards entirely; only grounded Poison types absorb Toxic Spikes.
       if (!isGrounded(p)) return;
       if (sc.spikes) {
         const frac = [0, 1 / 8, 1 / 6, 1 / 4][Math.min(3, sc.spikes)];
@@ -539,20 +574,13 @@
     }
     tryStatus(p, status, source = null, opts = {}) {
       if (!p || p.fainted || p.status || !status) return false;
-      const st = status === 'tox' ? 'tox' : status;
-      const ab = abilityId(p);
-      const abilityBlock = (st === 'brn' && ab === 'waterveil') || (st === 'par' && ab === 'limber')
-        || (st === 'slp' && ['insomnia', 'vitalspirit'].includes(ab)) || (['psn', 'tox'].includes(st) && ab === 'immunity')
-        || (st === 'frz' && ab === 'magmaarmor') || ab === 'purifyingsalt'
-        || (st === 'slp' && ab === 'leafguard' && this.weather === 'sun');
-      if (abilityBlock) { this.say(`${p.name} 的特性使其不会陷入该异常状态！`); return false; }
-      if (opts.fromStatusMove && source && source !== p && ab === 'goodasgold') { this.say(`${p.name} 的黄金之躯挡下了变化招式！`); return false; }
-      if ((st === 'brn' && p.types.includes('Fire')) || (st === 'frz' && p.types.includes('Ice'))
-        || (st === 'par' && p.types.includes('Electric')) || (['psn', 'tox'].includes(st) && (p.types.includes('Poison') || p.types.includes('Steel')))) return false;
-      if (isGrounded(p)) {
-        if (this.field.terrain === 'misty') { this.say('薄雾场地保护着宝可梦！'); return false; }
-        if (this.field.terrain === 'electric' && st === 'slp') { this.say('电气场地让宝可梦无法入睡！'); return false; }
-      }
+      const st = String(status || '').toLowerCase();
+      const immunity = statusImmunityReason(p, st, this);
+      if (immunity === 'ability') { this.say(`${p.name} 的特性使其不会陷入该异常状态！`); return false; }
+      if (opts.fromStatusMove && source && source !== p && abilityId(p) === 'goodasgold') { this.say(`${p.name} 的黄金之躯挡下了变化招式！`); return false; }
+      if (immunity === 'type' || immunity === 'invalid') return false;
+      if (immunity === 'misty') { this.say('薄雾场地保护着宝可梦！'); return false; }
+      if (immunity === 'electric') { this.say('电气场地让宝可梦无法入睡！'); return false; }
       p.status = st;
       if (st === 'tox') p.toxicCounter = 1;
       if (st === 'slp') p.sleepTurns = 1 + Math.floor(this.rng() * 3);
@@ -739,6 +767,7 @@
       if (!old.fainted && hasAbility(old, 'naturalcure') && old.status) { old.status = null; this.say(`${old.name} 的自然回复治愈了异常状态。`); }
       old.stages = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
       old.volatile = {};
+      old._protectStreak = 0;
       old.choiceLockedMove = null;
       this.active[side] = index;
       this.say(`${side === 0 ? '我方' : '敌方'}收回了 ${old.name}，换上 ${p.name}！`);
@@ -831,12 +860,25 @@
       const wantsZ = opts.mechanic === 'z' && !this.mechanicUsed[side].z && user.mechanic === 'z' && user.zType === baseMove.type;
       if (wantsZ) move = makeZMove(user, baseMove);
       if (user.dynamaxed) move = makeMaxMove(user, baseMove);
-      if (!this.canMove(user, baseMove)) return;
+      const protectMove = ['protect', 'maxguard'].includes(move.volatileStatus);
+      if (!protectMove) user._protectStreak = 0;
+      if (!this.canMove(user, baseMove)) { if (protectMove) user._protectStreak = 0; return; }
       if (baseMove.id === 'struggle') { this._struggled = true; this.say(`${user.name} 已经没有可以使用的招式了！`); }
       if (baseMove.ppLeft > 0 && baseMove.id !== 'struggle') baseMove.ppLeft--;
       if (wantsZ) { this.mechanicUsed[side].z = true; this.say(`💥 ${user.name} 发动了Ｚ招式！`); }
       if (['choiceband', 'choicespecs', 'choicescarf'].includes(itemId(user)) && !user.choiceLockedMove) user.choiceLockedMove = baseMove.id;
       this.say(`${user.name} 使用了 ${move.name}！`);
+      if (protectMove) {
+        const streak = Math.max(0, Number(user._protectStreak) || 0);
+        const chance = streak ? 1 / (3 ** streak) : 1;
+        if (chance < 1 && this.rng() >= chance) {
+          user._protectStreak = 0;
+          this.say('但是失败了！');
+          this.checkItemTrigger(user, 'pp');
+          return;
+        }
+        user._protectStreak = streak + 1;
+      }
       if (move.selfdestruct === 'always' || baseMove.id === 'finalgambit') this._boom = user; // v1.3.5：大爆炸 / 自爆 / 搏命，使用后自己倒下
       const selfTarget = move.category === 'Status' && !move.basePower && (move.heal || (move.boosts && move.target === 'self') || move.status === undefined && move.volatileStatus === undefined);
       const realTarget = (move.target === 'self' || selfTarget) ? user : target;
@@ -852,6 +894,11 @@
         if (interaction.kind === 'heal') this.heal(realTarget, Math.floor(realTarget.maxHp / 4), '特性回复了体力');
         if (interaction.kind === 'boost') this.changeStages(realTarget, interaction.boosts, realTarget);
         if (interaction.kind === 'flashfire') { realTarget.volatile.flashfire = true; this.say(`${realTarget.name} 的引火被激发了！`); }
+        return;
+      }
+      // Showdown-style OHKO type metadata (for example Sheer Cold's `ohko: 'Ice'`) is an explicit immunity rule.
+      if (typeof move.ohko === 'string' && realTarget.types?.includes(move.ohko)) {
+        this.say(`对 ${realTarget.name} 没有效果……`);
         return;
       }
       // Accuracy
@@ -985,7 +1032,7 @@
         // v1.3.5：几个常见的变化招式
         if (move.id === 'rest') {
           if (user.hp >= user.maxHp) this.say('但是失败了！（体力已经是满的）');
-          else if (hasAbility(user, 'insomnia', 'vitalspirit', 'comatose')) this.say(`${user.name} 无法入睡，但是失败了！`);
+          else if (statusImmunityReason(user, 'slp', this)) this.say(`${user.name} 无法入睡，但是失败了！`);
           else { user.status = 'slp'; user.sleepTurns = 3; delete user.toxicCounter; const real = user.maxHp - user.hp; user.hp = user.maxHp; this.say(`${user.name} 睡着了，并且回复了全部体力（+${real}）！`); }
         }
         if (move.id === 'haze') {
