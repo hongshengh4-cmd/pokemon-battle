@@ -1,8 +1,8 @@
-// 宝可梦·关都之旅 · 外置桥接 v1.3.20（队伍／仓库面板恢复修订）
+// 宝可梦·关都之旅 · 外置桥接 v1.3.21（实卡跟随／叫声／长按修复）
 // 由角色卡的酒馆助手脚本加载：
 //   window.ST_BRIDGE_PACK='kanto-main';
 //   window.PKM_APP_BASE_URL='https://<你的用户名>.github.io/pokemon-battle/';
-//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.20-panel-restore-1');
+//   await import(window.PKM_APP_BASE_URL+'st-bridge/bridge.js?v=1.3.21-follow-voice-hold-1');
 // 面板布局依 v1.3.0 机制修复卡恢复：蓝色队伍卡、绿色六列仓库；队伍／仓库操作仍读写实时 MVU 变量。
 // 负责：开局登记界面、图鉴状态栏（PKMKanto.mountDex）、右下角精灵球（队伍/仓库/跟随）、
 //       附近野生遭遇、对战窗口（pkm-modal-v1 通道 ↔ 自己的 pokemon-battle 网页）、
@@ -16,7 +16,7 @@
 //       ② 和小智 / 小霞 / 小刚对战时，对战块漏写的伙伴宝可梦按原作进度补上（例：小智收服绿毛虫后 = 皮卡丘 + 绿毛虫）。
 //       ③ 对战画面的信息改准：顶部标签写对战类型和双方实际只数，敌方信息框写对手名字，战斗记录第一行写明赛制。
 // v1.3.7：精灵球可拖到屏幕任意位置；叫声可换成自己的动画配音（st-bridge/audio/cries/<id>.mp3）。
-import * as K from './kanto-data.js?v=1.3.20';
+import * as K from './kanto-data.js?v=1.3.21';
 
 const VERSION = K.VERSION;
 const W = window;
@@ -215,7 +215,7 @@ function cryId(name) { const id = speciesId(name); return id ? id.replace(/-/g, 
 // v1.3.8：配音二选一（精灵球面板里选）——🎬 动漫配音 / 🎮 游戏配音。全局一个默认，每只宝可梦还可以单独选（“默认”= 跟随全局）。
 //   🎮 游戏配音：原作游戏叫声（Pokémon Showdown 的音频）。
 //   🎬 动漫配音：① 有录音就播录音：<CRY_BASE><id>.mp3（id 与原作叫声同名：pikachu、mrmime、nidoranf……；备选版本 <id>_2.mp3… 需 manifest.json）；
-//               ② 这只还没有录音时按“没有动漫录音时”的设置：🗣️ 语音合成喊名字（浏览器自带朗读，按体型调音高；默认）／🎮 改播游戏叫声／🔇 不出声。
+//               ② 这只还没有录音时按“没有动漫录音时”的设置：🎮 原作游戏叫声（默认）／🗣️ 语音合成喊名字（按体型调音高）／🔇 不出声。
 //   设置都存在当前浏览器（localStorage）：pkmKantoCrySrc = anime|game，pkmKantoCryFallback = tts|game|mute，pkmKantoCryMon:<uid> = anime|game，
 //   pkmKantoCryBase = 动漫录音地址（默认本站 st-bridge/audio/cries/）。v1.3.7 的旧值 auto / custom 自动当作 anime。
 //   想把录音只放在本机、不进公开仓库：文件放进酒馆的 public/pkm-cries/，面板“动漫录音地址”填 /pkm-cries/。
@@ -228,7 +228,7 @@ const FALLBACKS = ['tts', 'game', 'mute'];
 const FALLBACK_ZH = { tts: '🗣️ 语音合成', game: '🎮 游戏叫声', mute: '🔇 不出声' };
 const normVoice = v => (v === 'auto' || v === 'custom' ? 'anime' : VOICES.includes(v) ? v : null);
 const globalVoice = () => normVoice(lsGet('pkmKantoCrySrc')) || 'anime';
-const cryFallback = () => { const v = lsGet('pkmKantoCryFallback'); return FALLBACKS.includes(v) ? v : 'tts'; };
+const cryFallback = () => { const v = lsGet('pkmKantoCryFallback'); return FALLBACKS.includes(v) ? v : 'game'; };
 const monCryKey = s => (s?.uid ? 'pkmKantoCryMon:' + s.uid : null);
 const monVoicePref = s => { const k = monCryKey(s); return k ? normVoice(lsGet(k)) : null; }; // null = 跟随全局
 const voiceOf = s => monVoicePref(s) || globalVoice();
@@ -253,7 +253,17 @@ const cryEls = new Map();   // url -> Audio（重复点击不用重新下载）
 const cryProbe = new Map(); // id -> 正在探测的 Promise
 const cryLast = {};         // id -> 上一次播的是第几个版本（避免连续两次同一个）
 let cryTakes = {};          // manifest.json 里的 takes：{ pikachu: 3 } 表示有 pikachu.mp3、pikachu_2.mp3、pikachu_3.mp3
-function loadCryManifest() { cryTakes = {}; const base = CRY_BASE; fetch(base + 'manifest.json?v=' + VERSION).then(r => (r.ok ? r.json() : null)).then(j => { if (base === CRY_BASE && j?.takes && typeof j.takes === 'object') cryTakes = j.takes; }).catch(() => {}); }
+let cryManifestKnown = false, cryManifestCount = null;
+function loadCryManifest() {
+  cryTakes = {}; cryManifestKnown = false; cryManifestCount = null;
+  const base = CRY_BASE;
+  fetch(base + 'manifest.json?v=' + VERSION).then(r => (r.ok ? r.json() : null)).then(j => {
+    if (base !== CRY_BASE || !j || typeof j !== 'object') return;
+    if (j.takes && typeof j.takes === 'object') cryTakes = j.takes;
+    const count = j.count == null ? NaN : Number(j.count);
+    if (Number.isFinite(count) && count >= 0) { cryManifestKnown = true; cryManifestCount = count; }
+  }).catch(() => {});
+}
 loadCryManifest();
 function setCryBase(url) {
   const v = String(url || '').trim();
@@ -265,6 +275,7 @@ function setCryBase(url) {
 // 预先探测有没有录音（只取文件头）：面板能标出“有录音 / 没录音”，点击时也能立刻决定播什么（语音合成要在点击的瞬间开始才稳）
 function probeCry(id) {
   if (!id) return Promise.resolve(false);
+  if (cryManifestKnown && cryManifestCount === 0) { cryMiss.add(id); return Promise.resolve(false); }
   if (cryHave.has(id)) return Promise.resolve(true);
   if (cryMiss.has(id)) return Promise.resolve(false);
   if (cryProbe.has(id)) return cryProbe.get(id);
@@ -361,6 +372,14 @@ function playCry(s, line, voice) {
   stopCry();
   if ((VOICES.includes(voice) ? voice : voiceOf(s)) === 'game') { playGameCry(id, vol); return 'game'; }
   if (cryMiss.has(id)) return animeFallback(s, id, vol, line);
+  // 本次发布的录音清单明确为 0：同步改播原作游戏叫声，不能等 MP3 404 后再尝试播放，
+  // 否则浏览器会把异步回退判定为自动播放，用户第一次点击就听不到声音。
+  if (cryManifestKnown && cryManifestCount === 0) { cryMiss.add(id); return animeFallback(s, id, vol, line); }
+  // 首次载入清单前也确保点击立即有声；同时后台探测自备动漫录音，后续点击可切回录音。
+  if (!cryManifestKnown && !cryHave.has(id) && CRY_BASE === (BASE + 'st-bridge/audio/cries/')) {
+    probeCry(id);
+    if (cryFallback() === 'game') { playGameCry(id, vol); return 'game'; }
+  }
   playCustomCry(id, vol, () => animeFallback(s, id, vol, line));
   return cryHave.has(id) ? 'anime' : 'probe';
 }
@@ -381,7 +400,7 @@ function cryStatus(s) {
   const fb = cryFallback();
   const canSpeak = fb === 'tts' && ttsReady() && !!ttsText(cryLines(s?.species || s?.name)[0]);
   const alt = fb === 'mute' ? '不出声' : canSpeak ? '语音合成' : '改播游戏叫声';
-  if (cryMiss.has(id)) return { cls: 'alt', text: `没有录音·${alt}` };
+  if (cryMiss.has(id) || (cryManifestKnown && cryManifestCount === 0)) return { cls: 'alt', text: `没有录音·${alt}` };
   return { cls: 'wait', text: `检测录音中…（没有就${alt}）` };
 }
 // 控制台试听：__PKM_KANTO__.testCry('皮卡丘')、__PKM_KANTO__.testCry('皮卡丘', 'game')
@@ -1764,7 +1783,7 @@ function installBallDrag(el) {
     const d = ballDrag; if (!d || e.pointerId !== d.id) return;
     const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
     if (!d.moved) {
-      if (Math.hypot(dx, dy) < (e.pointerType === 'touch' ? 9 : 6)) return;   // 手指 / 鼠标抖一下不算拖动
+      if (Math.hypot(dx, dy) < (e.pointerType === 'touch' ? 14 : 8)) return;   // 手指 / 鼠标抖一下不算拖动
       d.moved = true; el.classList.add('dragging');
       try { el.setPointerCapture(e.pointerId); } catch (_) {}                  // 拖到聊天里的 iframe 上方也不会丢
     }
@@ -1813,6 +1832,7 @@ function renderBall() {
   const n = pkm.party.slots.filter(hasMon).length;
   const f = [...pkm.party.slots, ...pkm.party.box].find(s => hasMon(s) && s.uid && s.uid === pkm.party.follow);
   const fUrl = f ? spriteUrl(f.species || f.name, { anim: true, shiny: f.shiny }) : '';
+  if (f && voiceOf(f) === 'anime') { const id = cryId(f.species || f.name); if (id && !cryHave.has(id) && !cryMiss.has(id)) probeCry(id); }
   el.innerHTML = `${fUrl ? `<img class="follower" draggable="false" src="${esc(fUrl)}" title="${esc(monName(f))}正跟在你身边（点一下听它叫）" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<button class="orb" title="队伍与仓库（关都之旅）"><span class="count">${n}</span></button>`;
   placeBall(el);
   if (PD.getElementById('pkm-kanto-panel')) renderPanel();
@@ -1826,6 +1846,7 @@ function statBlock(s) {
   return `<details class="stx"><summary>能力 · 个体 · 羁绊 <span class="muted">${esc(K.QUALITY_ZH[s.quality] || '')}${cryLines(s.species || s.name)[0] ? ' · 叫声「' + esc(cryLines(s.species || s.name)[0]) + '」' : ''}</span></summary><div class="sg">${cells}</div><div class="bd2">${bars}</div></details>`;
 }
 function togglePanel() { const p = PD.getElementById('pkm-kanto-panel'); if (p) p.remove(); else renderPanel(); }
+function openPanel() { renderPanel(); return PD.getElementById('pkm-kanto-panel'); }
 // v1.3.8：每只宝可梦一行“配音”：默认（跟随全局）/ 🎬 动漫 / 🎮 游戏 + ▶ 试听 + 实际会怎么出声
 function voiceRow(s, where, i) {
   const pref = monVoicePref(s), eff = pref || globalVoice(), st = cryStatus(s);
@@ -1912,7 +1933,7 @@ function panelAudioSettings() {
   return `<div class="pk-snd">
     <div class="r"><span class="l">叫声音量</span><input type="range" min="0" max="100" step="5" value="${cvol}" data-op="vol" title="叫声音量"><b class="vv">${cvol}</b></div>
     <div class="r"><span class="l">默认配音</span><span class="seg">${seg('gvoice', 'anime', '🎬 动漫配音', gv === 'anime', '没单独选过的宝可梦都用动漫配音')}${seg('gvoice', 'game', '🎮 游戏配音', gv === 'game', '没单独选过的宝可梦都用原作游戏叫声')}</span></div>
-    <div class="r"><span class="l">没有动漫录音时</span><span class="seg">${seg('fallback', 'tts', '🗣️ 语音合成', fb === 'tts', tts ? '用浏览器的中文语音喊它的名字（按体型调音高）' : '这台设备暂时没有中文语音，会自动改播游戏叫声')}${seg('fallback', 'game', '🎮 游戏叫声', fb === 'game')}${seg('fallback', 'mute', '🔇 不出声', fb === 'mute')}</span></div>
+    <div class="r"><span class="l">没有动漫录音时</span><span class="seg">${seg('fallback', 'tts', '🗣️ 语音合成', fb === 'tts', tts ? '用浏览器的中文语音喊它的名字（按体型调音高）' : '这台设备暂时没有中文语音，会自动改播游戏叫声')}${seg('fallback', 'game', '🎮 游戏叫声', fb === 'game', '无动漫录音时播放原作游戏叫声；当前为默认')}${seg('fallback', 'mute', '🔇 不出声', fb === 'mute')}</span></div>
     ${fb === 'tts' && !tts ? '<div class="warn">这台设备的浏览器暂时没有中文语音：语音合成会自动改播游戏叫声（在系统设置里装上中文语音包后刷新即可）。</div>' : ''}
     <details class="adv"${baseVal ? ' open' : ''}><summary>动漫录音地址（高级）</summary><div class="r"><input type="text" data-op="cbase" value="${esc(baseVal)}" placeholder="留空 = 网站的 st-bridge/audio/cries/" spellcheck="false"><button type="button" data-op="cbase-save">保存</button></div><small>录音按「英文名小写.mp3」命名（pikachu.mp3、mrmime.mp3……对照表见网站 st-bridge/audio/cries/CHECKLIST.md）。只放在自己电脑上：放进酒馆的 public/pkm-cries/，这里填 /pkm-cries/。现在读取：${esc(CRY_BASE)}</small></details>
     <div class="pk-note">🎬 动漫配音有录音就播你的录音；尚无录音时按上方设置回退。🎮 游戏配音为原作游戏叫声。配音设置保存在当前浏览器。</div>
@@ -2001,7 +2022,7 @@ function previewCry(s = previewMon(), voice) { if (s) cry(s, voice); }
 async function onVoiceOp(b) {
   const op = b.dataset.op;
   if (op === 'gvoice') { lsSet('pkmKantoCrySrc', VOICES.includes(b.dataset.v) ? b.dataset.v : 'anime'); renderPanel(); previewCry(); return; }
-  if (op === 'fallback') { lsSet('pkmKantoCryFallback', FALLBACKS.includes(b.dataset.v) ? b.dataset.v : 'tts'); renderPanel(); previewCry(undefined, 'anime'); return; }
+  if (op === 'fallback') { lsSet('pkmKantoCryFallback', FALLBACKS.includes(b.dataset.v) ? b.dataset.v : 'game'); renderPanel(); previewCry(undefined, 'anime'); return; }
   if (op === 'cbase-save') {
     const v = String(b.parentElement?.querySelector('[data-op=cbase]')?.value || '').trim();
     if (v && !/^(https?:\/\/|\/)/i.test(v)) { toast('录音地址要以 http(s):// 或 / 开头，例如 /pkm-cries/', 'warning'); return; }
@@ -2639,7 +2660,7 @@ function on(evName, fn) {
 
 async function start() {
   ensureHostStyle();
-  P.PKMKanto = { __owner: instance, version: VERSION, base: BASE, mountDex, openBattle: spec => openBattle(spec), read: readPkm, refresh: refreshAll };
+  P.PKMKanto = { __owner: instance, version: VERSION, base: BASE, mountDex, openBattle: spec => openBattle(spec), openPanel, togglePanel, closePanel: () => PD.getElementById('pkm-kanto-panel')?.remove(), read: readPkm, refresh: refreshAll };
   listen(P, 'message', onHostMessage);
   const chatEl = PD.getElementById('chat');
   if (chatEl) { const mo = new P.MutationObserver(() => { clearTimeout(mo._t); mo._t = setTimeout(scanSetup, 60); }); mo.observe(chatEl, { childList: true, subtree: true }); cleanups.push(() => mo.disconnect()); }

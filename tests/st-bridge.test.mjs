@@ -32,6 +32,17 @@ test('Ball panel restores the v1.3.0 blue team / green 6-column storage layout',
   assert.ok(br.includes("data-op=\"toparty\""));
   assert.ok(br.includes("data-op=\"tobox\""));
 });
+test('Ball panel exposes direct open/close methods for long-press handlers', () => {
+  const br = read('st-bridge/bridge.js');
+  assert.ok(br.includes('function openPanel() { renderPanel(); return PD.getElementById(\'pkm-kanto-panel\'); }'));
+  assert.ok(br.includes('openPanel, togglePanel, closePanel:'));
+});
+test('Missing anime audio uses the original game cry synchronously by default', () => {
+  const br = read('st-bridge/bridge.js');
+  assert.ok(br.includes("return FALLBACKS.includes(v) ? v : 'game';"));
+  assert.ok(br.includes('if (cryManifestKnown && cryManifestCount === 0) { cryMiss.add(id); return animeFallback(s, id, vol, line); }'));
+  assert.ok(br.includes("playGameCry(id, vol); return 'game';"));
+});
 test('Every encounter species has a Chinese name known to the battle site', () => {
   const all = [...Object.values(K.ENCOUNTERS).flat(), ...K.WATER_ENCOUNTERS];
   for (const [name, lo, hi] of all) { assert.ok(zhSpecies.has(name), name); assert.ok(lo >= 1 && hi >= lo && hi <= 100, name); }

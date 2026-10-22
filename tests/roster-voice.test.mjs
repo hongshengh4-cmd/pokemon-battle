@@ -100,10 +100,10 @@ test('per-Pokémon override (by uid) beats the global default; "默认" inherits
   mem.delete('pkmKantoCryMon:a'); assert.equal(vctx.voiceOf(a), 'game');
   mem.delete('pkmKantoCrySrc');
 });
-test('missing anime recording: speech synthesis by default; game / mute selectable', () => {
-  assert.equal(vctx.cryFallback(), 'tts');
+test('missing anime recording: original game cry by default; TTS / mute remain selectable', () => {
+  assert.equal(vctx.cryFallback(), 'game');
   for (const v of ['tts', 'game', 'mute']) { mem.set('pkmKantoCryFallback', v); assert.equal(vctx.cryFallback(), v); }
-  mem.set('pkmKantoCryFallback', 'loud'); assert.equal(vctx.cryFallback(), 'tts'); mem.delete('pkmKantoCryFallback');
+  mem.set('pkmKantoCryFallback', 'loud'); assert.equal(vctx.cryFallback(), 'game'); mem.delete('pkmKantoCryFallback');
 });
 test('speech text strips stage directions and turns drawn-out sounds into pauses', () => {
   const t = vctx.ttsText;
